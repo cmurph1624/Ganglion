@@ -33,9 +33,30 @@ async function init() {
     setActive(activeId);
   }
 
+  if ('Notification' in window) Notification.requestPermission();
+
   api.onTabStatus(({ tabId, status }) => {
     const t = tabs.get(tabId);
-    if (t) t.statusEl.dataset.status = status;
+    if (!t) return;
+    t.statusEl.dataset.status = status;
+    if (status === 'waiting' && (document.hidden || tabId !== state.activeTabId)) {
+      if (Notification.permission === 'granted') {
+        new Notification('Ganglion — input needed', {
+          body: `Claude is waiting in "${t.tabData.name}"`
+        });
+      }
+    }
+    if (status !== 'working') t.toolLabelEl.textContent = '';
+  });
+
+  api.onTabTool(({ tabId, tool }) => {
+    const t = tabs.get(tabId);
+    if (!t) return;
+    if (tool && t.statusEl.dataset.status === 'working') {
+      t.toolLabelEl.textContent = tool;
+    } else {
+      t.toolLabelEl.textContent = '';
+    }
   });
 
   document.getElementById('new-tab-btn').addEventListener('click', () => addTab());
@@ -65,7 +86,8 @@ function addTab() {
     cwd: null,
     splitPosition: 0.5,
     panelMode: 'hidden',
-    markdownFile: null
+    markdownFile: null,
+    autoName: true
   };
   state.tabs.push(tabData);
   renderTab(tabData);
@@ -93,6 +115,7 @@ function makeTerminalConfig() {
 function renderTab(tabData) {
   if (!tabData.panelMode) tabData.panelMode = 'hidden';
   if (!tabData.markdownFile) tabData.markdownFile = null;
+  if (tabData.autoName === undefined) tabData.autoName = true;
 
   const tabEl = document.createElement('div');
   tabEl.className = 'tab';
@@ -101,6 +124,9 @@ function renderTab(tabData) {
   const statusEl = document.createElement('span');
   statusEl.className = 'status-dot';
   statusEl.dataset.status = 'idle';
+
+  const toolLabelEl = document.createElement('span');
+  toolLabelEl.className = 'tool-label';
 
   const titleEl = document.createElement('span');
   titleEl.className = 'tab-title';
@@ -111,7 +137,7 @@ function renderTab(tabData) {
   closeEl.textContent = '×';
   closeEl.title = 'Close tab';
 
-  tabEl.append(statusEl, titleEl, closeEl);
+  tabEl.append(statusEl, toolLabelEl, titleEl, closeEl);
 
   tabEl.addEventListener('mousedown', (e) => {
     if (e.target === closeEl) return;
@@ -215,7 +241,7 @@ function renderTab(tabData) {
     termPaneRightEl, termHostRight,
     disposeData, disposeExit,
     disposeDataRight: null, disposeExitRight: null,
-    statusEl, titleEl,
+    statusEl, titleEl, toolLabelEl,
     rightPanel, divider,
     termToggle, mdToggle,
     mdViewer, mdInput, mdContent
@@ -362,11 +388,13 @@ function startRenameTab(tabData, titleEl) {
   input.select();
 
   let committed = false;
+  let cancelled = false;
   const commit = () => {
     if (committed) return;
     committed = true;
     const newName = input.value.trim() || tabData.name;
     tabData.name = newName;
+    if (!cancelled) tabData.autoName = false;
     titleEl.textContent = newName;
     input.replaceWith(titleEl);
     persistState();
@@ -376,6 +404,7 @@ function startRenameTab(tabData, titleEl) {
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     else if (e.key === 'Escape') {
+      cancelled = true;
       input.value = tabData.name;
       input.blur();
     }
@@ -430,6 +459,15 @@ async function syncCwds() {
       if (cwd && cwd !== t.tabData.cwd) {
         t.tabData.cwd = cwd;
         changed = true;
+        if (t.tabData.autoName !== false) {
+          try {
+            const name = await api.getRepoName(t.tabData.id, cwd);
+            if (name) {
+              t.tabData.name = name;
+              t.titleEl.textContent = name;
+            }
+          } catch {}
+        }
       }
     } catch {}
   }

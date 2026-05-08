@@ -60,6 +60,12 @@ function statusFileFor(tabId) {
   return `/tmp/ganglion-${tabId}-status`;
 }
 
+function toolFileFor(tabId) {
+  return `/tmp/ganglion-${tabId}-tool`;
+}
+
+const toolWatchers = new Map();
+
 function attachStatusWatcher(tabId) {
   const file = statusFileFor(tabId);
   try {
@@ -75,6 +81,19 @@ function attachStatusWatcher(tabId) {
   try {
     const w = fs.watch(file, { persistent: false }, () => read());
     statusWatchers.set(tabId, w);
+  } catch {}
+
+  const toolFile = toolFileFor(tabId);
+  try { fs.writeFileSync(toolFile, ''); } catch {}
+  const readTool = () => {
+    try {
+      const tool = fs.readFileSync(toolFile, 'utf8').trim();
+      broadcast({ type: 'tab:tool', tabId, tool });
+    } catch {}
+  };
+  try {
+    const tw = fs.watch(toolFile, { persistent: false }, () => readTool());
+    toolWatchers.set(tabId, tw);
   } catch {}
 }
 
@@ -155,7 +174,35 @@ function handleMessage(ws, msg) {
           statusWatchers.delete(tabId);
         }
         try { fs.unlinkSync(statusFileFor(tabId)); } catch {}
+        const tw = toolWatchers.get(tabId);
+        if (tw) {
+          try { tw.close(); } catch {}
+          toolWatchers.delete(tabId);
+        }
+        try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
       }
+      break;
+    }
+    case 'pty:reponame': {
+      const cwd = parsed.cwd;
+      if (!cwd) {
+        ws.send(JSON.stringify({ type: 'pty:reponame:result', reqId: parsed.reqId, name: null }));
+        break;
+      }
+      let dir = cwd;
+      const home = os.homedir();
+      let repoName = null;
+      while (true) {
+        if (fs.existsSync(path.join(dir, '.git'))) {
+          repoName = path.basename(dir);
+          break;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir || dir === home) break;
+        dir = parent;
+      }
+      if (!repoName) repoName = path.basename(cwd);
+      ws.send(JSON.stringify({ type: 'pty:reponame:result', reqId: parsed.reqId, name: repoName }));
       break;
     }
     case 'pty:cwd': {
@@ -189,6 +236,9 @@ function cleanup() {
   }
   for (const w of statusWatchers.values()) {
     try { w.close(); } catch {}
+  }
+  for (const tw of toolWatchers.values()) {
+    try { tw.close(); } catch {}
   }
   process.exit(0);
 }

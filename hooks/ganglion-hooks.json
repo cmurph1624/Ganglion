@@ -26,7 +26,18 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && python3 -c \"import sys,json; d=json.load(sys.stdin); open('/tmp/ganglion-'+('$GANGLION_TAB_ID')+'-tool','w').write(d.get('tool_name',''))\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
           }
         ]
       }
@@ -46,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
           }
         ]
       }
@@ -56,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
           }
         ]
       }

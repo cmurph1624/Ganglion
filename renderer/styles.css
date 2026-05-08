@@ -67,6 +67,17 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
 .status-dot[data-status="waiting"] { background: var(--red); box-shadow: 0 0 6px var(--red); }
 .status-dot[data-status="idle"] { background: var(--gray); }
 
+.tool-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  max-width: 60px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tool-label:empty { display: none; }
+
 .tab-title {
   flex: 1;
   overflow: hidden;

@@ -5,6 +5,7 @@
   const dataHandlers = new Map();
   const exitHandlers = new Map();
   const statusHandlers = [];
+  const toolHandlers = [];
   let messageQueue = [];
 
   function connect() {
@@ -42,6 +43,15 @@
         }
         case 'tab:status': {
           statusHandlers.forEach((cb) => cb({ tabId: msg.tabId, status: msg.status }));
+          break;
+        }
+        case 'pty:reponame:result': {
+          const resolve = pending.get(msg.reqId);
+          if (resolve) { pending.delete(msg.reqId); resolve(msg.name); }
+          break;
+        }
+        case 'tab:tool': {
+          toolHandlers.forEach((cb) => cb({ tabId: msg.tabId, tool: msg.tool }));
           break;
         }
       }
@@ -111,6 +121,16 @@
     },
     onTabStatus(cb) {
       statusHandlers.push(cb);
+    },
+    onTabTool(cb) {
+      toolHandlers.push(cb);
+    },
+    getRepoName(tabId, cwd) {
+      const reqId = ++reqCounter;
+      return new Promise((resolve) => {
+        pending.set(reqId, resolve);
+        send({ type: 'pty:reponame', tabId, cwd, reqId });
+      });
     }
   };
 })();

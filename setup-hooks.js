@@ -40,4 +40,4 @@ for (const [event, entries] of Object.entries(ganglionHooks)) {
 
 fs.writeFileSync(settingsFile, JSON.stringify(existing, null, 2));
 console.log(`Installed Ganglion hooks into ${settingsFile}`);
-console.log('Hook events configured: SessionStart, UserPromptSubmit, PreToolUse, Notification, Stop, SessionEnd');
+console.log('Hook events configured: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SessionEnd');
