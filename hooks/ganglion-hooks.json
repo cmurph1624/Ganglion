@@ -1,0 +1,65 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf waiting > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+          }
+        ]
+      }
+    ]
+  }
+}
