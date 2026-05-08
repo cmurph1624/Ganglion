@@ -23,6 +23,18 @@ app.use(express.static(path.join(__dirname, 'renderer')));
 app.get('/xterm.css', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/css/xterm.css')));
 app.get('/xterm.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/lib/xterm.js')));
 app.get('/addon-fit.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-fit/lib/addon-fit.js')));
+app.get('/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
+
+app.get('/file', (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).send('Missing path parameter');
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.type('text/plain').send(content);
+  } catch (err) {
+    res.status(404).send(`Cannot read file: ${err.message}`);
+  }
+});
 
 function broadcast(msg) {
   const json = JSON.stringify(msg);
