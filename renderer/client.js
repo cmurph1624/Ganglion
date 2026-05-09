@@ -31,7 +31,8 @@
           if (resolve) { pending.delete(msg.reqId); resolve(msg.cwd); }
           break;
         }
-        case 'pty:data': {
+        case 'pty:data':
+        case 'pty:replay': {
           const cbs = dataHandlers.get(msg.tabId);
           if (cbs) cbs.forEach((cb) => cb(msg.data));
           break;

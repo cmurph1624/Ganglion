@@ -12,6 +12,7 @@ const STATE_DIR = path.join(os.homedir(), '.ganglion');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
 
 const ptyProcesses = new Map();
+const ptyBuffers = new Map();
 const statusWatchers = new Map();
 const clients = new Set();
 
@@ -98,7 +99,10 @@ function attachStatusWatcher(tabId) {
 }
 
 function spawnPty(ws, tabId, cwd) {
-  if (ptyProcesses.has(tabId)) return;
+  if (ptyProcesses.has(tabId)) {
+    ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
+    return;
+  }
   const shell = process.env.SHELL || '/bin/bash';
   const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
 
@@ -116,11 +120,16 @@ function spawnPty(ws, tabId, cwd) {
     env
   });
   ptyProcesses.set(tabId, p);
+  ptyBuffers.set(tabId, '');
   p.onData((data) => {
+    const current = ptyBuffers.get(tabId) || '';
+    const updated = current + data;
+    ptyBuffers.set(tabId, updated.length > 512000 ? updated.slice(-512000) : updated);
     broadcast({ type: 'pty:data', tabId, data });
   });
   p.onExit(() => {
     ptyProcesses.delete(tabId);
+    ptyBuffers.delete(tabId);
     broadcast({ type: 'pty:exit', tabId });
   });
 
@@ -139,6 +148,9 @@ function handleMessage(ws, msg) {
     case 'state:load': {
       const state = loadState();
       ws.send(JSON.stringify({ type: 'state:loaded', reqId: parsed.reqId, state }));
+      for (const [tabId, buf] of ptyBuffers) {
+        if (buf) ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: buf }));
+      }
       break;
     }
     case 'state:save': {
@@ -167,6 +179,7 @@ function handleMessage(ws, msg) {
         try { p.kill(); } catch {}
         ptyProcesses.delete(tabId);
       }
+      ptyBuffers.delete(tabId);
       if (!tabId.endsWith('-right')) {
         const w = statusWatchers.get(tabId);
         if (w) {
