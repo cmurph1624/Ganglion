@@ -112,6 +112,33 @@ function makeTerminalConfig() {
   };
 }
 
+function attachImagePasteHandler(hostEl, tabId) {
+  hostEl.addEventListener('paste', async (e) => {
+    const items = [...(e.clipboardData?.items || [])];
+    const imageItem = items.find(item => item.type.startsWith('image/'));
+    if (!imageItem) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    const blob = imageItem.getAsFile();
+    if (!blob) return;
+
+    try {
+      const resp = await fetch('/upload-image', {
+        method: 'POST',
+        headers: { 'Content-Type': imageItem.type },
+        body: blob
+      });
+      if (!resp.ok) throw new Error('Upload failed');
+      const result = await resp.json();
+      api.ptyWrite(tabId, result.path);
+    } catch (err) {
+      console.error('Image paste failed:', err);
+    }
+  }, true);
+}
+
 function renderTab(tabData) {
   if (!tabData.panelMode) tabData.panelMode = 'hidden';
   if (!tabData.markdownFile) tabData.markdownFile = null;
@@ -222,6 +249,19 @@ function renderTab(tabData) {
   const fitAddon = new FitAddonCtor();
   term.loadAddon(fitAddon);
   term.open(termHost);
+
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && !e.metaKey) {
+      if (e.key === 'v' || e.key === 'V' || (e.shiftKey && e.key === 'C')) return false;
+      e.preventDefault();
+      return true;
+    }
+    return true;
+  });
+
+  attachImagePasteHandler(termHost, tabData.id);
+
   requestAnimationFrame(() => {
     try { fitAddon.fit(); } catch {}
     api.ptySpawn(tabData.id, tabData.cwd);
@@ -296,6 +336,19 @@ function spawnRightTerminal(entry) {
   const fitAddonRight = new FitAddonCtor();
   termRight.loadAddon(fitAddonRight);
   termRight.open(entry.termHostRight);
+
+  termRight.attachCustomKeyEventHandler((e) => {
+    if (e.type !== 'keydown') return true;
+    if (e.ctrlKey && !e.metaKey) {
+      if (e.key === 'v' || e.key === 'V' || (e.shiftKey && e.key === 'C')) return false;
+      e.preventDefault();
+      return true;
+    }
+    return true;
+  });
+
+  attachImagePasteHandler(entry.termHostRight, rightId);
+
   requestAnimationFrame(() => {
     try { fitAddonRight.fit(); } catch {}
     api.ptySpawn(rightId, entry.tabData.cwd);

@@ -26,6 +26,14 @@ app.get('/xterm.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modu
 app.get('/addon-fit.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-fit/lib/addon-fit.js')));
 app.get('/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
 
+app.post('/upload-image', express.raw({ type: 'image/*', limit: '10mb' }), (req, res) => {
+  const ext = (req.headers['content-type'] || 'image/png').split('/')[1] || 'png';
+  const filename = `ganglion-paste-${Date.now()}.${ext}`;
+  const filepath = path.join(os.tmpdir(), filename);
+  fs.writeFileSync(filepath, req.body);
+  res.json({ path: filepath });
+});
+
 app.get('/file', (req, res) => {
   const filePath = req.query.path;
   if (!filePath) return res.status(400).send('Missing path parameter');
