@@ -6,6 +6,7 @@
   const exitHandlers = new Map();
   const statusHandlers = [];
   const toolHandlers = [];
+  const ingestHandlers = [];
   let messageQueue = [];
 
   function connect() {
@@ -53,6 +54,26 @@
         }
         case 'tab:tool': {
           toolHandlers.forEach((cb) => cb({ tabId: msg.tabId, tool: msg.tool }));
+          break;
+        }
+        case 'memory:search:result': {
+          const resolve = pending.get(msg.reqId);
+          if (resolve) { pending.delete(msg.reqId); resolve(msg.results); }
+          break;
+        }
+        case 'memory:getSession:result':
+        case 'memory:getTurn:result': {
+          const resolve = pending.get(msg.reqId);
+          if (resolve) { pending.delete(msg.reqId); resolve(msg.data); }
+          break;
+        }
+        case 'memory:projects:result': {
+          const resolve = pending.get(msg.reqId);
+          if (resolve) { pending.delete(msg.reqId); resolve(msg.projects); }
+          break;
+        }
+        case 'memory:ingested': {
+          ingestHandlers.forEach((cb) => cb({ sessionId: msg.sessionId, added: msg.added }));
           break;
         }
       }
@@ -132,6 +153,37 @@
         pending.set(reqId, resolve);
         send({ type: 'pty:reponame', tabId, cwd, reqId });
       });
+    },
+    memorySearch(params) {
+      const reqId = ++reqCounter;
+      return new Promise((resolve) => {
+        pending.set(reqId, resolve);
+        send({ type: 'memory:search', params, reqId });
+      });
+    },
+    memoryGetSession(sessionId) {
+      const reqId = ++reqCounter;
+      return new Promise((resolve) => {
+        pending.set(reqId, resolve);
+        send({ type: 'memory:getSession', sessionId, reqId });
+      });
+    },
+    memoryGetTurn(uuid, context) {
+      const reqId = ++reqCounter;
+      return new Promise((resolve) => {
+        pending.set(reqId, resolve);
+        send({ type: 'memory:getTurn', uuid, context, reqId });
+      });
+    },
+    memoryProjects() {
+      const reqId = ++reqCounter;
+      return new Promise((resolve) => {
+        pending.set(reqId, resolve);
+        send({ type: 'memory:projects', reqId });
+      });
+    },
+    onMemoryIngested(cb) {
+      ingestHandlers.push(cb);
     }
   };
 })();

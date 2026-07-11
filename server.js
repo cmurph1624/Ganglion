@@ -6,6 +6,17 @@ const fs = require('fs');
 const os = require('os');
 const { execFile } = require('child_process');
 const pty = require('node-pty');
+const { getDb } = require('./db/db');
+const { ingestTranscript } = require('./memory/ingest');
+const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault');
+const memorySearch = require('./memory/search');
+const distiller = require('./memory/distiller');
+
+// Distillation makes an LLM call per session and rewrites native memory files, so it
+// is opt-in. Enable with GANGLION_DISTILL_ENABLED=1 once you're comfortable with it.
+const DISTILL_ENABLED = process.env.GANGLION_DISTILL_ENABLED === '1';
+const distillDebounce = new Map();
+const distillRunning = new Set();
 
 const PORT = process.env.PORT || 3000;
 const STATE_DIR = path.join(os.homedir(), '.ganglion');
@@ -15,6 +26,18 @@ const ptyProcesses = new Map();
 const ptyBuffers = new Map();
 const statusWatchers = new Map();
 const clients = new Set();
+const ingestWatchers = new Map();
+const ingestDebounce = new Map();
+
+// Memory store. Opened eagerly; if it fails, capture is disabled but the terminal
+// multiplexer keeps working.
+let db = null;
+try {
+  db = getDb();
+  console.log('Ganglion memory store ready');
+} catch (err) {
+  console.error('Ganglion memory store failed to open:', err.message);
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -98,6 +121,134 @@ function attachStatusWatcher(tabId) {
   } catch {}
 }
 
+function ingestFileFor(tabId) {
+  return `/tmp/ganglion-${tabId}-ingest`;
+}
+
+// Read a signal payload written by a Stop/SessionEnd hook and ingest the referenced
+// transcript. Errors are swallowed so a bad signal never disrupts the terminal.
+function processIngestSignal(file) {
+  if (!db) return;
+  let payload;
+  try {
+    payload = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return;
+  }
+  const transcriptPath = payload && payload.transcript_path;
+  if (!transcriptPath) return;
+  try {
+    const { sessionId, added } = ingestTranscript(db, transcriptPath);
+    if (added > 0) {
+      broadcast({ type: 'memory:ingested', sessionId, added });
+      maybeDistill(sessionId);
+    }
+  } catch (err) {
+    console.error('ingest failed:', err.message);
+  }
+}
+
+// Fire-and-forget distillation, debounced per session so a burst of Stops collapses
+// into one run, and guarded against overlapping runs for the same session.
+function maybeDistill(sessionId) {
+  if (!DISTILL_ENABLED || !db || !sessionId) return;
+  clearTimeout(distillDebounce.get(sessionId));
+  distillDebounce.set(
+    sessionId,
+    setTimeout(() => {
+      if (distillRunning.has(sessionId)) return;
+      distillRunning.add(sessionId);
+      distiller
+        .distillSession(db, sessionId)
+        .then((r) => {
+          if (r.applied > 0) {
+            console.log(`distilled ${r.applied} fact(s) for session ${sessionId}`);
+            broadcast({ type: 'memory:distilled', sessionId, applied: r.applied });
+          }
+        })
+        .catch((err) => console.error('distill failed:', err.message))
+        .finally(() => distillRunning.delete(sessionId));
+    }, 3000)
+  );
+}
+
+function attachIngestWatcher(tabId) {
+  const file = ingestFileFor(tabId);
+  const fire = () => {
+    clearTimeout(ingestDebounce.get(tabId));
+    ingestDebounce.set(tabId, setTimeout(() => processIngestSignal(file), 500));
+  };
+  // Drain anything already written (e.g. a Stop that fired before this watcher existed).
+  if (fs.existsSync(file)) fire();
+  try {
+    const w = fs.watch(file, { persistent: false }, () => fire());
+    ingestWatchers.set(tabId, w);
+  } catch {
+    // File may not exist yet; retry attaching once it appears via a lightweight poll.
+    const iv = setInterval(() => {
+      if (!fs.existsSync(file)) return;
+      clearInterval(iv);
+      try {
+        const w = fs.watch(file, { persistent: false }, () => fire());
+        ingestWatchers.set(tabId, w);
+      } catch {}
+      fire();
+    }, 1000);
+    ingestWatchers.set(tabId, { close: () => clearInterval(iv) });
+  }
+}
+
+function detachIngestWatcher(tabId) {
+  const w = ingestWatchers.get(tabId);
+  if (w) {
+    try { w.close(); } catch {}
+    ingestWatchers.delete(tabId);
+  }
+  clearTimeout(ingestDebounce.get(tabId));
+  ingestDebounce.delete(tabId);
+  try { fs.unlinkSync(ingestFileFor(tabId)); } catch {}
+}
+
+// Watch the Obsidian vault so edits show up in recall promptly. Node's recursive
+// fs.watch is supported on Linux; a full mtime-incremental sweep runs first to catch
+// anything changed while the server was down.
+let vaultWatcher = null;
+const vaultDebounce = new Map();
+function startVaultWatcher() {
+  if (!db || !fs.existsSync(DEFAULT_VAULT)) return;
+  // Catch-up sweep off the hot path.
+  setImmediate(() => {
+    try { indexVault(db); } catch (err) { console.error('vault sweep failed:', err.message); }
+  });
+  try {
+    vaultWatcher = fs.watch(DEFAULT_VAULT, { persistent: false, recursive: true }, (_evt, rel) => {
+      if (!rel || !rel.endsWith('.md')) return;
+      const abs = path.join(DEFAULT_VAULT, rel);
+      clearTimeout(vaultDebounce.get(abs));
+      vaultDebounce.set(
+        abs,
+        setTimeout(() => {
+          try { indexFile(db, abs); } catch (err) { console.error('vault index failed:', err.message); }
+        }, 1000)
+      );
+    });
+  } catch (err) {
+    console.error('vault watcher unavailable (recursive fs.watch failed):', err.message);
+  }
+}
+
+// On boot, drain any ingest signals left behind while the server was down.
+function drainIngestSignals() {
+  if (!db) return;
+  let files;
+  try {
+    files = fs.readdirSync('/tmp').filter((f) => /^ganglion-.*-ingest$/.test(f));
+  } catch {
+    return;
+  }
+  for (const f of files) processIngestSignal(path.join('/tmp', f));
+}
+
 function spawnPty(ws, tabId, cwd) {
   if (ptyProcesses.has(tabId)) {
     ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
@@ -133,7 +284,10 @@ function spawnPty(ws, tabId, cwd) {
     broadcast({ type: 'pty:exit', tabId });
   });
 
-  if (!tabId.endsWith('-right')) attachStatusWatcher(tabId);
+  if (!tabId.endsWith('-right')) {
+    attachStatusWatcher(tabId);
+    attachIngestWatcher(tabId);
+  }
 }
 
 function handleMessage(ws, msg) {
@@ -193,6 +347,7 @@ function handleMessage(ws, msg) {
           toolWatchers.delete(tabId);
         }
         try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
+        detachIngestWatcher(tabId);
       }
       break;
     }
@@ -216,6 +371,46 @@ function handleMessage(ws, msg) {
       }
       if (!repoName) repoName = path.basename(cwd);
       ws.send(JSON.stringify({ type: 'pty:reponame:result', reqId: parsed.reqId, name: repoName }));
+      break;
+    }
+    case 'memory:search': {
+      let results = [];
+      try {
+        if (db) results = memorySearch.search(db, parsed.params || {});
+      } catch (err) {
+        console.error('memory:search failed:', err.message);
+      }
+      ws.send(JSON.stringify({ type: 'memory:search:result', reqId: parsed.reqId, results }));
+      break;
+    }
+    case 'memory:getSession': {
+      let data = null;
+      try {
+        if (db) data = memorySearch.getSession(db, parsed.sessionId);
+      } catch (err) {
+        console.error('memory:getSession failed:', err.message);
+      }
+      ws.send(JSON.stringify({ type: 'memory:getSession:result', reqId: parsed.reqId, data }));
+      break;
+    }
+    case 'memory:getTurn': {
+      let data = null;
+      try {
+        if (db) data = memorySearch.getTurn(db, parsed.uuid, parsed.context);
+      } catch (err) {
+        console.error('memory:getTurn failed:', err.message);
+      }
+      ws.send(JSON.stringify({ type: 'memory:getTurn:result', reqId: parsed.reqId, data }));
+      break;
+    }
+    case 'memory:projects': {
+      let projects = [];
+      try {
+        if (db) projects = db.prepare('SELECT DISTINCT project_slug FROM sessions ORDER BY project_slug').all().map((r) => r.project_slug);
+      } catch (err) {
+        console.error('memory:projects failed:', err.message);
+      }
+      ws.send(JSON.stringify({ type: 'memory:projects:result', reqId: parsed.reqId, projects }));
       break;
     }
     case 'pty:cwd': {
@@ -253,11 +448,20 @@ function cleanup() {
   for (const tw of toolWatchers.values()) {
     try { tw.close(); } catch {}
   }
+  for (const iw of ingestWatchers.values()) {
+    try { iw.close(); } catch {}
+  }
+  if (vaultWatcher) {
+    try { vaultWatcher.close(); } catch {}
+  }
   process.exit(0);
 }
 
 process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
+
+drainIngestSignals();
+startVaultWatcher();
 
 server.listen(PORT, () => {
   console.log(`Ganglion running at http://localhost:${PORT}`);

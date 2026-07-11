@@ -5,11 +5,15 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "setup-hooks": "node setup-hooks.js"
+    "setup-hooks": "node setup-hooks.js",
+    "test": "node --test",
+    "memory:import": "node scripts/import-history.js",
+    "memory:index-vault": "node memory/index-vault.js"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/xterm": "^5.5.0",
+    "better-sqlite3": "^12.11.1",
     "express": "^4.21.0",
     "marked": "^18.0.3",
     "node-pty": "^1.0.0",

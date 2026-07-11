@@ -57,7 +57,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && [ -z \"$GANGLION_DISTILL\" ] && python3 -c \"import sys,json,os; d=json.load(sys.stdin); open('/tmp/ganglion-'+os.environ['GANGLION_TAB_ID']+'-ingest','w').write(json.dumps({'session_id':d.get('session_id'),'transcript_path':d.get('transcript_path'),'cwd':d.get('cwd'),'event':d.get('hook_event_name','Stop')}))\" 2>/dev/null; exit 0"
           }
         ]
       }
@@ -67,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
+            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && [ -z \"$GANGLION_DISTILL\" ] && python3 -c \"import sys,json,os; d=json.load(sys.stdin); open('/tmp/ganglion-'+os.environ['GANGLION_TAB_ID']+'-ingest','w').write(json.dumps({'session_id':d.get('session_id'),'transcript_path':d.get('transcript_path'),'cwd':d.get('cwd'),'event':d.get('hook_event_name','SessionEnd')}))\" 2>/dev/null; exit 0"
           }
         ]
       }
