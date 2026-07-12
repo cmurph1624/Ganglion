@@ -18,7 +18,7 @@ module.exports = {
       interpreter: 'node',
       env: {
         GANGLION_DISTILL_ENABLED: '1',
-        GANGLION_DISTILL_MODEL: 'haiku',
+        GANGLION_DISTILL_MODEL: 'sonnet',
       },
     },
   ],
