@@ -18,7 +18,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const MAX_FACT_CHARS = 2500;
 const MAX_INDEX_ENTRIES = 40;
@@ -286,6 +286,32 @@ function writeBack(db, projectSlug, now) {
   return { files: ganglionFacts.length, indexEntries: indexFacts.length };
 }
 
+// Post-distill hook: if the project's memory dir is a git repo, snapshot each
+// regeneration as a commit. Opt-in purely by the presence of a repo (no-op
+// otherwise), and never allowed to break distillation — git failures are swallowed.
+function commitMemoryDir(projectSlug, sessionId, applied, now) {
+  const dir = memDirFor(projectSlug);
+  if (!fs.existsSync(path.join(dir, '.git'))) return false;
+  try {
+    execFileSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
+    const dirty = execFileSync('git', ['status', '--porcelain'], { cwd: dir }).toString().trim();
+    if (!dirty) return false; // nothing changed on disk — skip an empty commit
+    const stamp = (now || new Date()).toISOString();
+    const msg = `distill: ${applied} fact(s) from session ${sessionId}\n\n[auto-committed by ganglion distiller at ${stamp}]`;
+    const env = {
+      ...process.env,
+      GIT_AUTHOR_NAME: process.env.GIT_AUTHOR_NAME || 'Ganglion Distiller',
+      GIT_AUTHOR_EMAIL: process.env.GIT_AUTHOR_EMAIL || 'ganglion@localhost',
+      GIT_COMMITTER_NAME: process.env.GIT_COMMITTER_NAME || 'Ganglion Distiller',
+      GIT_COMMITTER_EMAIL: process.env.GIT_COMMITTER_EMAIL || 'ganglion@localhost',
+    };
+    execFileSync('git', ['commit', '-q', '-m', msg], { cwd: dir, env, stdio: 'ignore' });
+    return true;
+  } catch (_e) {
+    return false; // never let a git problem break the distill run
+  }
+}
+
 // --- Real LLM runner (headless claude -p, recursion-guarded) -----------------------
 function realRunLLM(prompt) {
   return new Promise((resolve, reject) => {
@@ -331,7 +357,8 @@ async function distillSession(db, sessionId, opts = {}) {
   const applied = applyFacts(db, projectSlug, sessionId, facts);
   if (applied === 0) return { applied: 0, files: 0, indexEntries: 0 };
   const wb = writeBack(db, projectSlug, opts.now);
-  return { applied, ...wb };
+  const committed = commitMemoryDir(projectSlug, sessionId, applied, opts.now);
+  return { applied, ...wb, committed };
 }
 
 module.exports = {
@@ -347,5 +374,6 @@ module.exports = {
   parseFactFile,
   slugify,
   memDirFor,
+  commitMemoryDir,
   realRunLLM
 };

@@ -5,6 +5,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { openDb } = require('../db/db');
 
 // Point the distiller's memory + backup dirs at throwaway temp locations.
@@ -123,6 +124,48 @@ test('preserves user entries alongside new ganglion facts in the index', async (
   const index = fs.readFileSync(path.join(dir, 'MEMORY.md'), 'utf8');
   assert.match(index, /\(user-note\.md\)/);
   assert.match(index, /\(new-fact\.md\)/);
+  db.close();
+});
+
+test('auto-commits the memory dir when it is a git repo', async () => {
+  const db = openDb(':memory:');
+  const slug = seedSession(db, 's5', 'proj-git');
+  const dir = memDirFor(slug);
+  fs.mkdirSync(dir, { recursive: true });
+  // Turn the memory dir into a git repo — this is the opt-in signal.
+  const git = (...a) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' });
+  git('init', '-q');
+  git('config', 'user.name', 'Test');
+  git('config', 'user.email', 'test@example.com');
+
+  const res = await distillSession(db, 's5', {
+    now: new Date('2026-07-10T12:00:00Z'),
+    runLLM: fakeLLM([
+      { action: 'create', slug: 'gitfact', title: 'Git Fact', description: 'from session', type: 'project', body: 'content' }
+    ])
+  });
+  assert.strictEqual(res.applied, 1);
+  assert.strictEqual(res.committed, true);
+
+  // A commit exists and the working tree is clean (everything was committed).
+  const log = execFileSync('git', ['log', '--oneline'], { cwd: dir }).toString();
+  assert.match(log, /session s5/);
+  const status = execFileSync('git', ['status', '--porcelain'], { cwd: dir }).toString().trim();
+  assert.strictEqual(status, '', 'memory dir should be clean after auto-commit');
+  db.close();
+});
+
+test('does not fail or commit when the memory dir is not a git repo', async () => {
+  const db = openDb(':memory:');
+  const slug = seedSession(db, 's6', 'proj-nogit');
+  const res = await distillSession(db, 's6', {
+    runLLM: fakeLLM([
+      { action: 'create', slug: 'plain', title: 'Plain', description: 'd', type: 'project', body: 'content' }
+    ])
+  });
+  assert.strictEqual(res.applied, 1);
+  assert.strictEqual(res.committed, false);
+  assert.ok(!fs.existsSync(path.join(memDirFor(slug), '.git')));
   db.close();
 });
 
