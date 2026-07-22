@@ -14,6 +14,8 @@ function seed() {
   t.run('u2', 's1', 'assistant', '2026-06-01T10:01:00Z', 'configure the stripe webhook endpoint', 'Bash');
   t.run('u3', 's2', 'user', '2026-07-01T10:00:00Z', 'stripe came up while building the terminal', null);
   db.prepare("INSERT INTO documents(path, title, body, folder, mtime) VALUES('/v/Billing.md','Billing Notes','stripe pricing tiers and billing cadence','10 Projects/DITD',1750000000000)").run();
+  // A distilled session note lives on the session row (the distiller writes it here).
+  db.prepare("UPDATE sessions SET summary='set up stripe billing webhooks for the pain diary; left off on retry handling' WHERE session_id='s1'").run();
   return db;
 }
 
@@ -43,6 +45,36 @@ test('source filter restricts to notes only', () => {
   const results = search(db, { query: 'stripe', source: 'note' });
   assert.ok(results.length > 0);
   assert.ok(results.every((r) => r.source === 'note'));
+  db.close();
+});
+
+test('search surfaces distilled session notes as source "summary"', () => {
+  const db = seed();
+  const results = search(db, { query: 'stripe' });
+  const summary = results.find((r) => r.source === 'summary');
+  assert.ok(summary, 'has a session-note hit');
+  assert.strictEqual(summary.sessionId, 's1');
+  assert.strictEqual(summary.project, 'proj-ditd');
+  assert.ok(summary.snippet.includes('[[')); // highlighted
+  db.close();
+});
+
+test('source filter restricts to session notes only', () => {
+  const db = seed();
+  const results = search(db, { query: 'stripe', source: 'summary' });
+  assert.ok(results.length > 0);
+  assert.ok(results.every((r) => r.source === 'summary'));
+  db.close();
+});
+
+test('session-note results respect the project and date filters', () => {
+  const db = seed();
+  const ditd = search(db, { query: 'stripe', source: 'summary', project: 'proj-ditd' });
+  assert.ok(ditd.length >= 1);
+  assert.ok(ditd.every((r) => r.project === 'proj-ditd'));
+
+  const none = search(db, { query: 'stripe', source: 'summary', project: 'proj-ganglion' });
+  assert.strictEqual(none.length, 0);
   db.close();
 });
 

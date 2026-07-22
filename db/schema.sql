@@ -23,6 +23,35 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_slug);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at);
 
+-- FTS5 over per-session distilled notes, keyed by sessions.rowid.
+--
+-- Unlike turns_fts/documents_fts (external-content, which avoid duplicating large text),
+-- this is a STANDALONE FTS5 table. Two reasons: (1) summary is tiny, so a copy is cheap;
+-- (2) crucially, this index is added to a DB that ALREADY has session rows, and external
+-- content would corrupt (SQLITE_CORRUPT_VTAB) the first time a trigger tried to 'delete'
+-- a pre-existing row that was never indexed. A standalone table lets the triggers use a
+-- forgiving DELETE-then-INSERT (a no-op for not-yet-indexed rows), so the backfill's
+-- `UPDATE sessions SET summary` cleanly indexes each old session on demand.
+--
+-- The update trigger is scoped `OF summary` so routine ingest — which UPDATEs sessions
+-- often (ended_at, turn_count, …) but never touches summary — does NOT churn this index;
+-- only the distiller's `UPDATE sessions SET summary` fires it. NULL summaries are never
+-- indexed (ingest inserts sessions with a NULL summary; the note arrives later via UPDATE).
+CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5(
+  summary,
+  tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS sessions_ai AFTER INSERT ON sessions WHEN new.summary IS NOT NULL BEGIN
+  INSERT INTO sessions_fts(rowid, summary) VALUES (new.rowid, new.summary);
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_ad AFTER DELETE ON sessions BEGIN
+  DELETE FROM sessions_fts WHERE rowid = old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS sessions_au AFTER UPDATE OF summary ON sessions BEGIN
+  DELETE FROM sessions_fts WHERE rowid = new.rowid;
+  INSERT INTO sessions_fts(rowid, summary) SELECT new.rowid, new.summary WHERE new.summary IS NOT NULL;
+END;
+
 -- One row per JSONL user/assistant line.
 CREATE TABLE IF NOT EXISTS turns (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -59,46 +88,11 @@ CREATE TRIGGER IF NOT EXISTS turns_au AFTER UPDATE ON turns BEGIN
   INSERT INTO turns_fts(rowid, text) VALUES (new.id, new.text);
 END;
 
--- Distilled durable facts (projection lives in ~/.claude/projects/<slug>/memory/*.md).
-CREATE TABLE IF NOT EXISTS memory_facts (
-  id                INTEGER PRIMARY KEY AUTOINCREMENT,
-  slug              TEXT NOT NULL,        -- filename stem, unique per project
-  project_slug      TEXT NOT NULL,
-  name              TEXT,                 -- frontmatter name/title
-  description       TEXT,                 -- one-line index desc
-  body              TEXT,                 -- markdown body
-  fact_type         TEXT,                 -- user|feedback|project|reference
-  origin_session_id TEXT,                 -- citation back to source session
-  char_count        INTEGER,
-  authored_by       TEXT DEFAULT 'ganglion', -- 'ganglion' | 'user' (never auto-overwrite 'user')
-  file_path         TEXT,                 -- the ~/.claude/.../memory/<slug>.md it maintains
-  active            INTEGER DEFAULT 1,    -- 0 = demoted out of the injected index
-  embedding         BLOB,                 -- semantic-ready, NULL now
-  embedding_model   TEXT,
-  created_at        TEXT DEFAULT (datetime('now')),
-  updated_at        TEXT,
-  UNIQUE(project_slug, slug)
-);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
-  name, description, body,
-  content='memory_facts', content_rowid='id',
-  tokenize='porter unicode61'
-);
-CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts BEGIN
-  INSERT INTO memory_facts_fts(rowid, name, description, body)
-    VALUES (new.id, new.name, new.description, new.body);
-END;
-CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts BEGIN
-  INSERT INTO memory_facts_fts(memory_facts_fts, rowid, name, description, body)
-    VALUES ('delete', old.id, old.name, old.description, old.body);
-END;
-CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
-  INSERT INTO memory_facts_fts(memory_facts_fts, rowid, name, description, body)
-    VALUES ('delete', old.id, old.name, old.description, old.body);
-  INSERT INTO memory_facts_fts(rowid, name, description, body)
-    VALUES (new.id, new.name, new.description, new.body);
-END;
+-- NOTE: the former `memory_facts` table + FTS mirror were retired when the distiller
+-- was repointed to write per-session notes into `sessions.summary` (see memory/distiller.js).
+-- Claude Code's native auto-memory now solely owns durable/injected facts. Fresh DBs no
+-- longer create memory_facts; any pre-existing table is left frozen/orphaned (dropping it
+-- from this always-applied schema would be destructive on every boot).
 
 -- Indexed Obsidian vault notes (and any non-transcript source). Read-only mirror.
 CREATE TABLE IF NOT EXISTS documents (

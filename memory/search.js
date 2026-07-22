@@ -78,6 +78,37 @@ function retrieveNotes(db, fts, opts, limit) {
   }));
 }
 
+function retrieveSummaries(db, fts, opts, limit) {
+  let sql = `
+    SELECT s.session_id AS sessionId, s.project_slug AS project,
+           s.transcript_path AS path, s.ended_at AS ts, s.status AS status,
+           bm25(sessions_fts) AS score,
+           snippet(sessions_fts, 0, '[[', ']]', '…', 12) AS snippet
+    FROM sessions_fts
+    JOIN sessions s ON s.rowid = sessions_fts.rowid
+    WHERE sessions_fts MATCH @fts`;
+  const params = { fts, limit };
+  if (opts.project) { sql += ' AND s.project_slug = @project'; params.project = opts.project; }
+  if (opts.dateFrom) { sql += ' AND s.ended_at >= @dateFrom'; params.dateFrom = opts.dateFrom; }
+  if (opts.dateTo) { sql += ' AND s.ended_at <= @dateTo'; params.dateTo = opts.dateTo; }
+  if (opts.status) { sql += ' AND s.status = @status'; params.status = opts.status; }
+  sql += ' ORDER BY score LIMIT @limit';
+  return db.prepare(sql).all(params).map((r) => ({
+    source: 'summary',
+    id: r.sessionId, // session_id doubles as the id for context expansion
+    title: null,
+    project: r.project,
+    path: r.path,
+    sessionId: r.sessionId,
+    ts: r.ts,
+    role: null,
+    tools: null,
+    byteOffset: null,
+    snippet: r.snippet,
+    score: r.score
+  }));
+}
+
 /** Stage 1: gather candidates from the requested source(s). */
 function retrieve(db, opts = {}) {
   const fts = buildFtsQuery(opts.query);
@@ -86,6 +117,7 @@ function retrieve(db, opts = {}) {
   const perSource = opts.limit || 30;
   const out = [];
   if (source === 'all' || source === 'session') out.push(...retrieveSessions(db, fts, opts, perSource));
+  if (source === 'all' || source === 'summary') out.push(...retrieveSummaries(db, fts, opts, perSource));
   if (source === 'all' || source === 'note') out.push(...retrieveNotes(db, fts, opts, perSource));
   return out;
 }
@@ -124,4 +156,4 @@ function getTurn(db, uuid, context = 3) {
   return { sessionId: turn.session_id, focusUuid: uuid, turns: neighbours };
 }
 
-module.exports = { search, retrieve, rank, getSession, getTurn, buildFtsQuery };
+module.exports = { search, retrieve, rank, getSession, getTurn, buildFtsQuery, retrieveSummaries };

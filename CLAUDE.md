@@ -1,5 +1,7 @@
 # Ganglion — Project Context for Claude Code
 
+> **Codebase Map:** see `docs/Codebase-Map.md` for the repo orientation layer (data flows, invariants, component + DB tables). Read it first when navigating the code.
+
 ## What It Is
 Ganglion is a browser-based terminal multiplexer that runs as a Node.js server on this machine. Each tab pairs a real interactive shell (via `node-pty` + `xterm.js`) with a markdown viewer. Tab colors reflect Claude Code's activity state in that terminal.
 
@@ -73,20 +75,27 @@ cross-session memory store. Three concerns:
   `/tmp/ganglion-<tabId>-ingest`; the server (`attachIngestWatcher`) reads the referenced
   transcript JSONL and incrementally ingests new turns into `~/.ganglion/memory.db`
   (byte-offset tracked per session; `INSERT OR IGNORE` on the JSONL `uuid`).
-- **Recall** — FTS5 keyword search over `turns` **and** the indexed Obsidian vault
-  (`documents`), with structured filters (project/date/tool/status). Surfaced in a global
-  browser overlay (🧠 Memory / Ctrl+K) with cited results and click-to-expand context.
-  Schema reserves `embedding` columns so semantic search can be added later without a rewrite.
-- **Injection (opt-in)** — a distiller runs headless `claude -p` after a session and
-  maintains the native `~/.claude/projects/<slug>/memory/*.md` + `MEMORY.md` that Claude Code
-  injects at session start. **Off by default** — enable with `GANGLION_DISTILL_ENABLED=1`.
-  It only rewrites files it authored (stamped `metadata.authoredBy: ganglion`); user/native
-  files are read-only and never clobbered, and every write is backed up to
-  `~/.ganglion/memory-backups/`. Recursion is prevented by unsetting `GANGLION_TAB_ID` and
-  setting `GANGLION_DISTILL=1` on the subprocess (the ingest hook no-ops under either).
+- **Recall** — FTS5 keyword search over `turns`, the per-session narrative notes
+  (`sessions.summary`, surfaced as the **"Session notes"** source), **and** the indexed
+  Obsidian vault (`documents`), with structured filters (project/date/tool/status). Surfaced
+  in a global browser overlay (🧠 Memory / Ctrl+K) with cited results and click-to-expand
+  context. Schema reserves `embedding` columns so semantic search can be added later without
+  a rewrite.
+- **Distillation → session notes** — after a session, a distiller runs headless `claude -p`
+  and writes ONE narrative note (≈120–250 words) into the `sessions.summary` column of
+  `~/.ganglion/memory.db`, auto-indexed into `sessions_fts` (via the `sessions_au` trigger)
+  and surfaced as the **"Session notes"** recall source. It **does not** touch Claude Code's
+  native memory files (`~/.claude/projects/<slug>/memory/*.md`) — native auto-memory solely
+  owns durable, injected facts, so the old two-writers collision is gone. **Off by default** —
+  enable with `GANGLION_DISTILL_ENABLED=1`. Non-substantive sessions (startup-only shells,
+  headless cron runs) yield no note (the model returns `(no note)`). Recursion is prevented by
+  unsetting `GANGLION_TAB_ID` and setting `GANGLION_DISTILL=1` on the subprocess (the ingest
+  hook no-ops under either).
 
-Backfill existing history + vault: `npm run memory:import`. Env knobs:
-`GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL` (default `haiku`), `GANGLION_VAULT`.
+Backfill notes for existing sessions: `node scripts/backfill-notes.js` (resumable — only
+selects sessions whose `summary` is still empty). Backfill turn history + vault:
+`npm run memory:import`. Env knobs: `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`
+(default `haiku`; the live pm2 config sets `sonnet`), `GANGLION_VAULT`.
 
 ## Session Persistence
 Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are only killed on explicit `pty:kill`.

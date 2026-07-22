@@ -12,8 +12,9 @@ const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault')
 const memorySearch = require('./memory/search');
 const distiller = require('./memory/distiller');
 
-// Distillation makes an LLM call per session and rewrites native memory files, so it
-// is opt-in. Enable with GANGLION_DISTILL_ENABLED=1 once you're comfortable with it.
+// Distillation makes an LLM call per session to write a narrative session note into
+// sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
+// native memory files. Still opt-in (an LLM call per session): GANGLION_DISTILL_ENABLED=1.
 const DISTILL_ENABLED = process.env.GANGLION_DISTILL_ENABLED === '1';
 const distillDebounce = new Map();
 const distillRunning = new Set();
@@ -169,9 +170,9 @@ function maybeDistill(sessionId) {
       distiller
         .distillSession(db, sessionId)
         .then((r) => {
-          if (r.applied > 0) {
-            console.log(`distilled ${r.applied} fact(s) for session ${sessionId}`);
-            broadcast({ type: 'memory:distilled', sessionId, applied: r.applied });
+          if (r.updated) {
+            console.log(`wrote session note (${r.chars} chars) for session ${sessionId}`);
+            broadcast({ type: 'memory:distilled', sessionId });
           }
         })
         .catch((err) => console.error('distill failed:', err.message))

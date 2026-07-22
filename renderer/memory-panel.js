@@ -24,8 +24,9 @@
       <div class="mem-filters">
         <select class="mem-source">
           <option value="all">All</option>
-          <option value="session">Sessions</option>
-          <option value="note">Notes</option>
+          <option value="session">Session turns</option>
+          <option value="summary">Session notes</option>
+          <option value="note">Vault notes</option>
         </select>
         <select class="mem-project"><option value="">All projects</option></select>
         <input class="mem-tool" type="text" placeholder="tool" size="6" />
@@ -134,11 +135,15 @@
     for (const r of results) {
       const row = document.createElement('div');
       row.className = 'mem-result';
-      const isNote = r.source === 'note';
-      const badge = isNote ? '<span class="mem-badge note">note</span>' : `<span class="mem-badge session">${escapeHtml(r.role || 'session')}</span>`;
-      const heading = isNote ? escapeHtml(r.title || '(untitled)') : shortProject(r.project);
+      const isVaultNote = r.source === 'note';
+      const isSummary = r.source === 'summary';
+      let badge;
+      if (isVaultNote) badge = '<span class="mem-badge note">note</span>';
+      else if (isSummary) badge = '<span class="mem-badge summary">session note</span>';
+      else badge = `<span class="mem-badge session">${escapeHtml(r.role || 'session')}</span>`;
+      const heading = isVaultNote ? escapeHtml(r.title || '(untitled)') : shortProject(r.project);
       const meta = [
-        isNote ? escapeHtml(r.project) : shortProject(r.project),
+        isVaultNote ? escapeHtml(r.project) : shortProject(r.project),
         r.ts ? relTime(r.ts) : '',
         r.tools ? `⚙ ${escapeHtml(r.tools)}` : ''
       ].filter(Boolean).join(' · ');
@@ -168,6 +173,11 @@
         const text = await resp.text();
         expand.innerHTML = `<div class="mem-note-body markdown-content">${window.marked.parse(text)}</div>
           <div class="mem-cite">${escapeHtml(r.path)}</div>`;
+      } else if (r.source === 'summary') {
+        const data = await api.memoryGetSession(r.sessionId);
+        const summary = data && data.session && data.session.summary;
+        expand.innerHTML = `<div class="mem-note-body markdown-content">${window.marked.parse(summary || '_no note_')}</div>
+          <div class="mem-cite">session ${escapeHtml(r.sessionId)} · ${escapeHtml(r.path)}</div>`;
       } else {
         const data = await api.memoryGetTurn(r.id, 3);
         if (!data || !data.turns) { expand.innerHTML = '<div class="mem-loading">No context.</div>'; return; }
