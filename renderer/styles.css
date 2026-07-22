@@ -326,6 +326,7 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
 }
 .mem-badge.note { background: #3a2f55; color: #c8b6ff; }
 .mem-badge.session { background: #1f3a4d; color: #8fd0ff; }
+.mem-badge.summary { background: #2f4d3a; color: #a6e6bf; }
 .mem-heading { font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-meta { color: var(--text-dim); font-size: 11px; margin: 3px 0 4px; }
 .mem-snippet { font-size: 12px; line-height: 1.5; color: var(--text); cursor: pointer; }

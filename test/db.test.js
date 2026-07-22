@@ -10,9 +10,67 @@ test('openDb applies schema and creates all tables', () => {
     .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
     .all()
     .map((r) => r.name);
-  for (const t of ['sessions', 'turns', 'memory_facts', 'documents']) {
+  for (const t of ['sessions', 'turns', 'documents']) {
     assert.ok(names.includes(t), `missing table: ${t}`);
   }
+  db.close();
+});
+
+test('memory_facts is retired (not created on a fresh DB)', () => {
+  const db = openDb(':memory:');
+  const names = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name);
+  assert.ok(!names.includes('memory_facts'), 'memory_facts should no longer exist');
+  db.close();
+});
+
+test('sessions_fts stays in sync with sessions.summary via triggers', () => {
+  const db = openDb(':memory:');
+  db.prepare(
+    "INSERT INTO sessions(session_id, project_slug, transcript_path) VALUES('s1','proj','/tmp/t.jsonl')"
+  ).run();
+
+  // A session with a NULL summary is not matchable.
+  assert.strictEqual(
+    db.prepare("SELECT count(*) c FROM sessions_fts WHERE sessions_fts MATCH 'webhook'").get().c,
+    0
+  );
+
+  // Setting the summary indexes it (the external-content delete-of-NULL must not throw).
+  db.prepare("UPDATE sessions SET summary='refactored the stripe webhook retry logic' WHERE session_id='s1'").run();
+  const hits = db
+    .prepare("SELECT s.session_id FROM sessions_fts f JOIN sessions s ON s.rowid=f.rowid WHERE sessions_fts MATCH 'webhook'")
+    .all();
+  assert.strictEqual(hits.length, 1);
+  assert.strictEqual(hits[0].session_id, 's1');
+
+  // Regenerating the note replaces the old text (delete old + insert new).
+  db.prepare("UPDATE sessions SET summary='now about pickleball court rotation' WHERE session_id='s1'").run();
+  assert.strictEqual(
+    db.prepare("SELECT count(*) c FROM sessions_fts WHERE sessions_fts MATCH 'webhook'").get().c,
+    0
+  );
+  assert.strictEqual(
+    db.prepare("SELECT count(*) c FROM sessions_fts WHERE sessions_fts MATCH 'pickleball'").get().c,
+    1
+  );
+  db.close();
+});
+
+test('routine (non-summary) session updates do not churn or corrupt sessions_fts', () => {
+  const db = openDb(':memory:');
+  db.prepare(
+    "INSERT INTO sessions(session_id, project_slug, transcript_path) VALUES('s1','proj','/tmp/t.jsonl')"
+  ).run();
+  db.prepare("UPDATE sessions SET summary='indexed billing note' WHERE session_id='s1'").run();
+  // An ingest-style update that never touches summary (AFTER UPDATE OF summary must not fire).
+  db.prepare("UPDATE sessions SET ended_at='2026-07-22T00:00:00Z', turn_count=5 WHERE session_id='s1'").run();
+  assert.strictEqual(
+    db.prepare("SELECT count(*) c FROM sessions_fts WHERE sessions_fts MATCH 'billing'").get().c,
+    1
+  );
   db.close();
 });
 
