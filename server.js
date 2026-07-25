@@ -11,6 +11,15 @@ const { ingestTranscript } = require('./memory/ingest');
 const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault');
 const memorySearch = require('./memory/search');
 const distiller = require('./memory/distiller');
+const {
+  resolveShell,
+  shellArgs,
+  signalDir,
+  signalFileFor,
+  cwdProbe,
+  parseCwdProbe,
+  INGEST_SIGNAL_PATTERN
+} = require('./lib/platform');
 
 // Distillation makes an LLM call per session to write a narrative session note into
 // sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
@@ -90,11 +99,11 @@ function saveState(state) {
 }
 
 function statusFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-status`;
+  return signalFileFor(tabId, 'status');
 }
 
 function toolFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-tool`;
+  return signalFileFor(tabId, 'tool');
 }
 
 const toolWatchers = new Map();
@@ -131,7 +140,7 @@ function attachStatusWatcher(tabId) {
 }
 
 function ingestFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-ingest`;
+  return signalFileFor(tabId, 'ingest');
 }
 
 // Read a signal payload written by a Stop/SessionEnd hook and ingest the referenced
@@ -249,13 +258,14 @@ function startVaultWatcher() {
 // On boot, drain any ingest signals left behind while the server was down.
 function drainIngestSignals() {
   if (!db) return;
+  const dir = signalDir();
   let files;
   try {
-    files = fs.readdirSync('/tmp').filter((f) => /^ganglion-.*-ingest$/.test(f));
+    files = fs.readdirSync(dir).filter((f) => INGEST_SIGNAL_PATTERN.test(f));
   } catch {
     return;
   }
-  for (const f of files) processIngestSignal(path.join('/tmp', f));
+  for (const f of files) processIngestSignal(path.join(dir, f));
 }
 
 function spawnPty(ws, tabId, cwd) {
@@ -263,7 +273,7 @@ function spawnPty(ws, tabId, cwd) {
     ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
     return;
   }
-  const shell = process.env.SHELL || '/bin/bash';
+  const shell = resolveShell();
   const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
 
   const env = { ...process.env };
@@ -272,7 +282,7 @@ function spawnPty(ws, tabId, cwd) {
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
 
-  const p = pty.spawn(shell, ['-l'], {
+  const p = pty.spawn(shell, shellArgs(), {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
@@ -428,13 +438,19 @@ function handleMessage(ws, msg) {
         ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
         break;
       }
-      execFile('lsof', ['-a', '-p', String(p.pid), '-d', 'cwd', '-Fn'], (err, stdout) => {
+      const probe = cwdProbe(p.pid);
+      if (!probe) {
+        // No supported cwd probe on this platform (Windows). Answer immediately rather
+        // than spawning a command that cannot exist.
+        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
+        break;
+      }
+      execFile(probe.command, probe.args, (err, stdout) => {
         if (err) {
           ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
           return;
         }
-        const line = stdout.split('\n').find((l) => l.startsWith('n'));
-        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: line ? line.slice(1) : null }));
+        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: parseCwdProbe(stdout) }));
       });
       break;
     }
