@@ -237,6 +237,24 @@ function renderTab(tabData) {
   mdOpenBtn.textContent = 'Open';
   mdToolbar.append(mdInput, mdOpenBtn);
 
+  // The desktop shell can offer a real file picker; a browser tab cannot, which is why the
+  // path above is a text input. Feature-detected rather than branched at build time, so
+  // this file stays identical for both front-ends -- in a browser `ganglionDesktop` is
+  // undefined, no button is created, and the toolbar is exactly what it was.
+  if (window.ganglionDesktop?.openMarkdown) {
+    const mdBrowseBtn = document.createElement('button');
+    mdBrowseBtn.textContent = 'Browse…';
+    mdBrowseBtn.addEventListener('click', async () => {
+      const picked = await window.ganglionDesktop.openMarkdown(
+        mdInput.value.trim() || tabData.cwd || undefined
+      );
+      if (!picked) return;
+      mdInput.value = picked;
+      loadMarkdownFile(tabData.id);
+    });
+    mdToolbar.append(mdBrowseBtn);
+  }
+
   const mdContent = document.createElement('div');
   mdContent.className = 'markdown-content';
 
