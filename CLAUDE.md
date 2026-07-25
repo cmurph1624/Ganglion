@@ -3,23 +3,53 @@
 > **Codebase Map:** see `docs/Codebase-Map.md` for the repo orientation layer (data flows, invariants, component + DB tables). Read it first when navigating the code.
 
 ## What It Is
-Ganglion is a browser-based terminal multiplexer that runs as a Node.js server on this machine. Each tab pairs a real interactive shell (via `node-pty` + `xterm.js`) with a markdown viewer. Tab colors reflect Claude Code's activity state in that terminal.
+Ganglion is a terminal multiplexer that runs as a Node.js server on this machine. Each tab pairs a real interactive shell (via `node-pty` + `xterm.js`) with a markdown viewer. Tab colors reflect Claude Code's activity state in that terminal.
+
+Two front-ends attach to that one server and **mirror the same live ptys**: a browser (used from the Mac) and an Electron desktop shell (used locally over RDP). Both can be connected at once.
 
 ## How to Run
-```bash
-cd ~/Documents/dev/Ganglion
+```powershell
+cd C:\Users\rdpuser\Documents\Dev\Ganglion
 node server.js          # or via pm2 (see below)
 npm run setup-hooks     # install Claude Code hooks (idempotent)
+npm run desktop         # optional Electron window onto the running server
 ```
 
 The app is managed by pm2 in production:
-```bash
-~/.npm-global/bin/pm2 list
-~/.npm-global/bin/pm2 restart ganglion
-~/.npm-global/bin/pm2 logs ganglion
+```powershell
+# ELEVATED shell required (the daemon runs in session 0; unelevated gives
+# `connect EPERM \\.\pipe\rpc.sock`).
+$node = "C:\Program Files\nodejs\node.exe"
+$pm2  = "C:\Users\rdpuser\AppData\Roaming\npm\node_modules\pm2\bin\pm2"
+
+whoami                                 # must be stigmergylabs\rdpuser
+& $node $pm2 list
+& $node $pm2 restart ganglion
+& $node $pm2 logs ganglion --lines 20 --nostream
 ```
 
-Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`.
+> **Do not use `pm2.cmd`.** The npm shim falls back to a bare `node` lookup
+> (`SET "_prog=node"`), which fails in an elevated shell with the cryptic
+> `'"node"' is not recognized` — nothing to do with pm2. Invoking node directly against
+> `node_modules\pm2\bin\pm2` sidesteps both PATH and PATHEXT.
+>
+> The paths are hardcoded rather than `$env:APPDATA` on purpose: if UAC ever elevates a
+> *different* admin account, `$env:APPDATA` resolves to that profile and you spawn a
+> second daemon instead of talking to the running one. Hence the `whoami` check.
+
+> ⚠️ Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command. Use a shell outside Ganglion. See `docs/verify-session-notes-deploy.md`.
+
+Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`. `GANGLION_HOST` pins the listen interface (defaults to `0.0.0.0`, which is what lets the Mac connect).
+
+## Desktop Client
+`npm run desktop` opens an Electron window onto the **already-running** server. Two rules keep it cheap and safe:
+
+- **It never spawns a server.** pm2 owns the lifecycle. On launch it probes the port and shows `electron/retry.html` if nothing answers, connecting automatically once the server returns. Closing the window is as harmless as closing a browser tab — ptys keep running.
+- **It never loads a native module.** Because it only opens a window, `node-pty` and `better-sqlite3` are never required from Electron — so **there is no `electron-rebuild` step**. Requiring `db/`, `memory/`, or either native module from `electron/` would break this.
+
+Launch it as `electron electron/main.js` (what the `desktop` script does), never `electron .` — that resolves `package.json:main`, which is `server.js`, and would boot Express inside Electron.
+
+Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so terminal keys (`Ctrl+W`, `Ctrl+T`, `Ctrl+L`, `Ctrl+R`, `F5`) reach the shell instead of browser chrome — the main reason the desktop shell exists.
 
 ## Architecture
 
@@ -36,7 +66,14 @@ Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`.
 | `memory/ingest.js` | Incremental ingest of Claude Code transcript JSONL into `turns` |
 | `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
-| `memory/distiller.js` | Distills durable facts via headless `claude -p`, maintains native `memory/*.md` |
+| `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
+| `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
+| `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
+| `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
+| `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
+| `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |
+| `electron/preload.js` | `contextBridge` surface (`isDesktop`, `openMarkdown`, `retry`) |
+| `electron/retry.html` | Standalone "waiting for server" screen |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index the vault (`npm run memory:import`) |
 | `renderer/memory-panel.js` | Global "Memory" recall overlay (Ctrl/Cmd+K) |
 | `test/*.test.js` | Node test-runner suite (`npm test`) |
@@ -51,7 +88,7 @@ All messages are JSON. Key types:
 | `state:save` | client → server | Persist tab state |
 | `pty:spawn` | client → server | Spawn a new pty for a tab |
 | `pty:write` | client → server | Send keystrokes to pty |
-| `pty:resize` | client → server | Resize pty |
+| `pty:resize` | client → server | Report this client's viewport. The pty is set to the **minimum over attached clients** (`lib/pty-sizing.js`), not to the last message — otherwise two mirrored windows of different sizes fight |
 | `pty:kill` | client → server | Kill pty and clean up |
 | `pty:data` | server → client | Terminal output (live) |
 | `pty:replay` | server → client | Buffered output replayed on reconnect |
@@ -114,8 +151,12 @@ Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Gangl
 ## State Persistence
 Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.ganglion/state.json` on every change and restored on load.
 
+> **Known gap with two front-ends connected.** `state:save` is a blind whole-file overwrite, so the browser and the desktop shell race: last writer wins. In practice this shows up as divider/panel positions ping-ponging (cosmetic), and — across a restart — a tab created in one front-end being dropped by the other's stale copy. The tab *list* is also not live-synced: a tab opened in one window does not appear in the other until reload, and closing one leaves a stale `[process exited]` tab. The planned fix splits shared tab data from per-client view state (the latter into `localStorage`), avoiding a merge protocol entirely.
+
 ## Key Constraints
-- `claudedev` cannot sudo — any system-level changes need Chris or SSH as `chris@localhost`
-- pm2 must be invoked with full path: `~/.npm-global/bin/pm2`
+- Shells run **unelevated**; anything needing elevation must be handed to Chris as a pasteable block
+- pm2 must be invoked as `node <prefix>\node_modules\pm2\bin\pm2` from an **elevated** shell — not via `pm2.cmd`, whose bare-`node` fallback fails there (see How to Run)
+- Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command
 - Scripts needing env vars must source `.env` explicitly
-- The README.md still references the old Electron/macOS setup — the app is now a Node.js web server
+- **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.
+- `pty:cwd` is inert on Windows (`lib/platform.js` returns no probe), so tab cwd and git-repo auto-naming do not update

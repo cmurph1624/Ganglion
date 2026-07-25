@@ -11,6 +11,17 @@ const { ingestTranscript } = require('./memory/ingest');
 const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault');
 const memorySearch = require('./memory/search');
 const distiller = require('./memory/distiller');
+const {
+  resolveShell,
+  shellArgs,
+  signalDir,
+  signalFileFor,
+  cwdProbe,
+  parseCwdProbe,
+  INGEST_SIGNAL_PATTERN
+} = require('./lib/platform');
+const { createSizeRegistry } = require('./lib/pty-sizing');
+const { serverPort } = require('./lib/server-probe');
 
 // Distillation makes an LLM call per session to write a narrative session note into
 // sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
@@ -19,7 +30,13 @@ const DISTILL_ENABLED = process.env.GANGLION_DISTILL_ENABLED === '1';
 const distillDebounce = new Map();
 const distillRunning = new Set();
 
-const PORT = process.env.PORT || 3000;
+// Shared with the desktop client (lib/server-probe.js) so the two cannot disagree about
+// where Ganglion listens.
+const PORT = serverPort();
+// A no-op by default. It exists so the listener can later be pinned to a single interface
+// (a Tailscale address, say) without another code change -- see the note about the
+// unauthenticated /file route below.
+const HOST = process.env.GANGLION_HOST || '0.0.0.0';
 const STATE_DIR = path.join(os.homedir(), '.ganglion');
 const STATE_FILE = path.join(STATE_DIR, 'state.json');
 
@@ -27,6 +44,10 @@ const ptyProcesses = new Map();
 const ptyBuffers = new Map();
 const statusWatchers = new Map();
 const clients = new Set();
+// Every client's desired terminal size, keyed by the WebSocket itself. Ganglion mirrors,
+// so a tab can be on screen in two places at once; the pty is sized to fit inside all of
+// them. See lib/pty-sizing.js.
+const sizes = createSizeRegistry();
 const ingestWatchers = new Map();
 const ingestDebounce = new Map();
 
@@ -90,11 +111,11 @@ function saveState(state) {
 }
 
 function statusFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-status`;
+  return signalFileFor(tabId, 'status');
 }
 
 function toolFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-tool`;
+  return signalFileFor(tabId, 'tool');
 }
 
 const toolWatchers = new Map();
@@ -131,7 +152,7 @@ function attachStatusWatcher(tabId) {
 }
 
 function ingestFileFor(tabId) {
-  return `/tmp/ganglion-${tabId}-ingest`;
+  return signalFileFor(tabId, 'ingest');
 }
 
 // Read a signal payload written by a Stop/SessionEnd hook and ingest the referenced
@@ -249,13 +270,24 @@ function startVaultWatcher() {
 // On boot, drain any ingest signals left behind while the server was down.
 function drainIngestSignals() {
   if (!db) return;
+  const dir = signalDir();
   let files;
   try {
-    files = fs.readdirSync('/tmp').filter((f) => /^ganglion-.*-ingest$/.test(f));
+    files = fs.readdirSync(dir).filter((f) => INGEST_SIGNAL_PATTERN.test(f));
   } catch {
     return;
   }
-  for (const f of files) processIngestSignal(path.join('/tmp', f));
+  for (const f of files) processIngestSignal(path.join(dir, f));
+}
+
+// Resize a pty to the size that fits inside every client currently watching it. A no-op
+// when the pty is gone or no client has reported a size yet.
+function applySize(tabId) {
+  const p = ptyProcesses.get(tabId);
+  if (!p) return;
+  const size = sizes.effective(tabId);
+  if (!size) return;
+  try { p.resize(size.cols, size.rows); } catch {}
 }
 
 function spawnPty(ws, tabId, cwd) {
@@ -263,7 +295,7 @@ function spawnPty(ws, tabId, cwd) {
     ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
     return;
   }
-  const shell = process.env.SHELL || '/bin/bash';
+  const shell = resolveShell();
   const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
 
   const env = { ...process.env };
@@ -272,7 +304,7 @@ function spawnPty(ws, tabId, cwd) {
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
 
-  const p = pty.spawn(shell, ['-l'], {
+  const p = pty.spawn(shell, shellArgs(), {
     name: 'xterm-256color',
     cols: 80,
     rows: 24,
@@ -290,8 +322,16 @@ function spawnPty(ws, tabId, cwd) {
   p.onExit(() => {
     ptyProcesses.delete(tabId);
     ptyBuffers.delete(tabId);
+    // Otherwise a tab id reused by a later spawn inherits the dimensions clients measured
+    // against this now-dead pty.
+    sizes.removeTab(tabId);
     broadcast({ type: 'pty:exit', tabId });
   });
+
+  // The renderer fits its terminal before asking for a pty, so a size for this tab is
+  // usually already on record by now. Applying it here means the shell starts at the right
+  // dimensions instead of sitting at the 80x24 above until the next resize.
+  applySize(tabId);
 
   if (!tabId.endsWith('-right')) {
     attachStatusWatcher(tabId);
@@ -330,9 +370,11 @@ function handleMessage(ws, msg) {
       break;
     }
     case 'pty:resize': {
-      const p = ptyProcesses.get(parsed.tabId);
-      if (!p) break;
-      try { p.resize(parsed.cols, parsed.rows); } catch {}
+      // Record this client's viewport, then give the pty the size that fits inside every
+      // attached client. Previously the last message won outright, so two mirrored windows
+      // of different sizes overwrote each other continuously.
+      sizes.set(ws, parsed.tabId, parsed.cols, parsed.rows);
+      applySize(parsed.tabId);
       break;
     }
     case 'pty:kill': {
@@ -343,6 +385,7 @@ function handleMessage(ws, msg) {
         ptyProcesses.delete(tabId);
       }
       ptyBuffers.delete(tabId);
+      sizes.removeTab(tabId);
       if (!tabId.endsWith('-right')) {
         const w = statusWatchers.get(tabId);
         if (w) {
@@ -428,13 +471,19 @@ function handleMessage(ws, msg) {
         ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
         break;
       }
-      execFile('lsof', ['-a', '-p', String(p.pid), '-d', 'cwd', '-Fn'], (err, stdout) => {
+      const probe = cwdProbe(p.pid);
+      if (!probe) {
+        // No supported cwd probe on this platform (Windows). Answer immediately rather
+        // than spawning a command that cannot exist.
+        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
+        break;
+      }
+      execFile(probe.command, probe.args, (err, stdout) => {
         if (err) {
           ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
           return;
         }
-        const line = stdout.split('\n').find((l) => l.startsWith('n'));
-        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: line ? line.slice(1) : null }));
+        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: parseCwdProbe(stdout) }));
       });
       break;
     }
@@ -444,7 +493,12 @@ function handleMessage(ws, msg) {
 wss.on('connection', (ws) => {
   clients.add(ws);
   ws.on('message', (msg) => handleMessage(ws, msg.toString()));
-  ws.on('close', () => clients.delete(ws));
+  ws.on('close', () => {
+    clients.delete(ws);
+    // Hand the remaining clients their space back: a small window that closes must stop
+    // constraining the ptys it was watching.
+    for (const tabId of sizes.removeClient(ws)) applySize(tabId);
+  });
 });
 
 function cleanup() {
@@ -472,6 +526,6 @@ process.on('SIGTERM', cleanup);
 drainIngestSignals();
 startVaultWatcher();
 
-server.listen(PORT, () => {
-  console.log(`Ganglion running at http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`Ganglion running at http://localhost:${PORT} (bound ${HOST})`);
 });

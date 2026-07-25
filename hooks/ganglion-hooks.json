@@ -1,11 +1,12 @@
 {
+  "_comment": "GANGLION_SIGNAL is replaced with an absolute path by setup-hooks.js. Every event routes through one Node handler that shares lib/platform.js with server.js, so the writer and reader of the signal files cannot disagree about their location. The previous POSIX shell one-liners (printf, [ -n ... ], python3) could not run on Windows.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "GANGLION_SIGNAL SessionStart"
           }
         ]
       }
@@ -15,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "GANGLION_SIGNAL UserPromptSubmit"
           }
         ]
       }
@@ -26,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && python3 -c \"import sys,json; d=json.load(sys.stdin); open('/tmp/ganglion-'+('$GANGLION_TAB_ID')+'-tool','w').write(d.get('tool_name',''))\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && printf working > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "GANGLION_SIGNAL PreToolUse"
           }
         ]
       }
@@ -37,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; exit 0"
+            "command": "GANGLION_SIGNAL PostToolUse"
           }
         ]
       }
@@ -47,7 +48,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf waiting > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; exit 0"
+            "command": "GANGLION_SIGNAL Notification"
           }
         ]
       }
@@ -57,7 +58,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && [ -z \"$GANGLION_DISTILL\" ] && python3 -c \"import sys,json,os; d=json.load(sys.stdin); open('/tmp/ganglion-'+os.environ['GANGLION_TAB_ID']+'-ingest','w').write(json.dumps({'session_id':d.get('session_id'),'transcript_path':d.get('transcript_path'),'cwd':d.get('cwd'),'event':d.get('hook_event_name','Stop')}))\" 2>/dev/null; exit 0"
+            "command": "GANGLION_SIGNAL Stop"
           }
         ]
       }
@@ -67,7 +68,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -n \"$GANGLION_TAB_ID\" ] && printf idle > \"/tmp/ganglion-$GANGLION_TAB_ID-status\"; [ -n \"$GANGLION_TAB_ID\" ] && printf \"\" > \"/tmp/ganglion-$GANGLION_TAB_ID-tool\" 2>/dev/null; [ -n \"$GANGLION_TAB_ID\" ] && [ -z \"$GANGLION_DISTILL\" ] && python3 -c \"import sys,json,os; d=json.load(sys.stdin); open('/tmp/ganglion-'+os.environ['GANGLION_TAB_ID']+'-ingest','w').write(json.dumps({'session_id':d.get('session_id'),'transcript_path':d.get('transcript_path'),'cwd':d.get('cwd'),'event':d.get('hook_event_name','SessionEnd')}))\" 2>/dev/null; exit 0"
+            "command": "GANGLION_SIGNAL SessionEnd"
           }
         ]
       }

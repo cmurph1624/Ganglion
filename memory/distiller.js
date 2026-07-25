@@ -18,6 +18,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile } = require('child_process');
+const { resolveClaudeBin } = require('../lib/platform');
 
 const CONTEXT_TURN_LIMIT = 40;
 const PER_TURN_CHARS = 800;
@@ -63,7 +64,7 @@ function realRunLLM(prompt) {
     const env = { ...process.env, GANGLION_DISTILL: '1' };
     delete env.GANGLION_TAB_ID; // recursion guard: no ingest signal from this subprocess
     execFile(
-      path.join(os.homedir(), '.npm-global', 'bin', 'claude'),
+      resolveClaudeBin(),
       ['-p', prompt, '--model', model, '--output-format', 'text'],
       { cwd: DISTILL_CWD, env, timeout: 120000, maxBuffer: 10 * 1024 * 1024 },
       (err, stdout) => {
