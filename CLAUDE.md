@@ -60,6 +60,8 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `renderer/renderer.js` | Tab UI, xterm.js wiring, markdown rendering, divider |
 | `renderer/client.js` | WebSocket client abstraction |
 | `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
+| `renderer/clipboard.js` | Clipboard writer with an execCommand fallback (the Mac front-end is not a secure context) |
+| `renderer/terminal-copy.js` | Binds the key policy + clipboard onto a live xterm (selection → copy, clear after) |
 | `renderer/styles.css` | Styles |
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy) |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
@@ -68,7 +70,8 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
-| `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
+| `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary |
+| `lib/osc7.js` | Reads the shell's OSC 7 cwd announcements out of the pty stream (the Windows cwd source) |
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
@@ -160,4 +163,4 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 - Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command
 - Scripts needing env vars must source `.env` explicitly
 - **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.
-- `pty:cwd` is inert on Windows (`lib/platform.js` returns no probe), so tab cwd and git-repo auto-naming do not update
+- `pty:cwd` on Windows comes from the **shell**, not the OS. Windows exposes no readable per-process cwd, so `cwdProbe()` still returns null there; instead `shellArgs()` installs a prompt wrapper that emits OSC 7 and the server reads it back off the pty stream (`lib/osc7.js`). Consequences: the cwd only advances when a **prompt is drawn** (a tab sitting inside a long-running `claude` reports the directory it last prompted in), and a shell spawned *inside* the pty is not wrapped. The renderer polls `pty:cwd` every 5s, so a `cd` renames the tab within ~5s

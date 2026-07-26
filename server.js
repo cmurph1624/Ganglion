@@ -20,6 +20,7 @@ const {
   parseCwdProbe,
   INGEST_SIGNAL_PATTERN
 } = require('./lib/platform');
+const { createCwdTracker } = require('./lib/osc7');
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
 
@@ -42,6 +43,10 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 
 const ptyProcesses = new Map();
 const ptyBuffers = new Map();
+// Working directory as reported by the shell itself via OSC 7 (lib/osc7.js), one tracker
+// per pty. This is the only source of cwd on Windows, where the OS cannot be asked -- see
+// cwdProbe() in lib/platform.js.
+const cwdTrackers = new Map();
 const statusWatchers = new Map();
 const clients = new Set();
 // Every client's desired terminal size, keyed by the WebSocket itself. Ganglion mirrors,
@@ -313,15 +318,22 @@ function spawnPty(ws, tabId, cwd) {
   });
   ptyProcesses.set(tabId, p);
   ptyBuffers.set(tabId, '');
+  const cwdTracker = createCwdTracker();
+  cwdTrackers.set(tabId, cwdTracker);
   p.onData((data) => {
     const current = ptyBuffers.get(tabId) || '';
     const updated = current + data;
     ptyBuffers.set(tabId, updated.length > 512000 ? updated.slice(-512000) : updated);
+    // The shell announces its directory from its prompt; read it back on the way past. The
+    // sequence is left in the stream because xterm.js discards OSC it has no handler for,
+    // and stripping it would mean re-scanning every chunk to no benefit.
+    try { cwdTracker.push(data); } catch {}
     broadcast({ type: 'pty:data', tabId, data });
   });
   p.onExit(() => {
     ptyProcesses.delete(tabId);
     ptyBuffers.delete(tabId);
+    cwdTrackers.delete(tabId);
     // Otherwise a tab id reused by a later spawn inherits the dimensions clients measured
     // against this now-dead pty.
     sizes.removeTab(tabId);
@@ -385,6 +397,7 @@ function handleMessage(ws, msg) {
         ptyProcesses.delete(tabId);
       }
       ptyBuffers.delete(tabId);
+      cwdTrackers.delete(tabId);
       sizes.removeTab(tabId);
       if (!tabId.endsWith('-right')) {
         const w = statusWatchers.get(tabId);
@@ -471,10 +484,20 @@ function handleMessage(ws, msg) {
         ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
         break;
       }
+      // What the shell told us beats what the OS can be asked. It is the only answer
+      // available on Windows, and on POSIX it is the more accurate of the two anyway --
+      // OSC 7 follows `cd` inside the shell, where lsof reports the pty leader's cwd.
+      // Shells that do not emit OSC 7 leave this empty and fall through to the probe.
+      const announced = cwdTrackers.get(parsed.tabId)?.cwd;
+      if (announced) {
+        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: announced }));
+        break;
+      }
+
       const probe = cwdProbe(p.pid);
       if (!probe) {
-        // No supported cwd probe on this platform (Windows). Answer immediately rather
-        // than spawning a command that cannot exist.
+        // No supported cwd probe on this platform (Windows) and the shell has not announced
+        // yet. Answer immediately rather than spawning a command that cannot exist.
         ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
         break;
       }

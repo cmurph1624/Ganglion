@@ -11,8 +11,11 @@ const {
   signalFileFor,
   cwdProbe,
   parseCwdProbe,
-  resolveClaudeBin
+  resolveClaudeBin,
+  hookCommand,
+  shellInitScript
 } = require('../lib/platform');
+const { createCwdTracker } = require('../lib/osc7');
 
 // --- resolveShell -------------------------------------------------------------------
 // server.js spawns the pty with `process.env.SHELL || '/bin/bash'`, which yields a path
@@ -49,13 +52,81 @@ test('resolveShell defaults to the running platform and real env', () => {
 // `-l` requests a login shell. Windows has no such concept and powershell.exe treats it
 // as an ambiguous prefix of -LiteralPath, so it must not be passed.
 
-test('shellArgs drops the login flag on win32', () => {
-  assert.deepStrictEqual(shellArgs('win32'), []);
+test('shellArgs never passes the login flag on win32', () => {
+  assert.ok(!shellArgs('win32').includes('-l'));
 });
 
 test('shellArgs keeps the login flag on posix', () => {
   assert.deepStrictEqual(shellArgs('linux'), ['-l']);
   assert.deepStrictEqual(shellArgs('darwin'), ['-l']);
+});
+
+// --- shellInitScript / the win32 cwd channel ----------------------------------------
+// Windows has no readable per-process cwd, so cwdProbe() returns null and tab names would
+// be frozen forever. Instead the shell volunteers its directory: these args install a
+// prompt wrapper that emits OSC 7, which lib/osc7.js reads back out of the pty stream.
+
+test('shellInitScript is win32-only', () => {
+  // POSIX already answers via `lsof -d cwd`, so there is no reason to touch the user's
+  // shell there -- and bash would need a different mechanism (PROMPT_COMMAND) anyway.
+  assert.strictEqual(shellInitScript('linux'), null);
+  assert.strictEqual(shellInitScript('darwin'), null);
+  assert.ok(shellInitScript('win32').length > 0);
+});
+
+test('shellInitScript wraps the existing prompt instead of replacing it', () => {
+  // The profile's prompt (oh-my-posh, starship, a hand-rolled one) must survive. The
+  // wrapper captures whatever `prompt` is at install time and calls through to it.
+  const script = shellInitScript('win32');
+  assert.match(script, /\$function:prompt/);
+  assert.match(script, /&\s*\$global:__ganglionInnerPrompt/);
+});
+
+test('shellInitScript refuses to wrap itself twice', () => {
+  // Without the guard, running the init a second time in one session captures our own
+  // wrapper as the "inner" prompt and the next prompt recurses until the shell dies.
+  assert.match(shellInitScript('win32'), /if\s*\(-not\s+\$global:__ganglionInnerPrompt\)/);
+});
+
+test('shellInitScript only reports real filesystem directories', () => {
+  // `cd HKLM:` or `cd Env:` leaves a ProviderPath that is not a path any consumer of
+  // pty:cwd could use -- fs.existsSync would fail and the tab would be renamed to junk.
+  assert.match(shellInitScript('win32'), /Provider\.Name\s+-eq\s+'FileSystem'/);
+});
+
+test('shellArgs hands the init script to powershell without quoting it', () => {
+  // The script contains quotes, $, {} and backslashes. Interpolating it into a command
+  // line would mean escaping it correctly through node-pty AND cmd AND PowerShell's own
+  // parser; -EncodedCommand sidesteps all three. -NoExit keeps the shell interactive
+  // afterwards, and the profile still loads because -NoProfile is absent.
+  const args = shellArgs('win32');
+  assert.ok(args.includes('-NoExit'), 'shell must stay interactive');
+  assert.ok(!args.includes('-NoProfile'), 'the user profile must still load');
+
+  const i = args.indexOf('-EncodedCommand');
+  assert.ok(i !== -1, 'init must be passed base64-encoded');
+
+  // PowerShell requires base64 of UTF-16LE, and decoding it back must yield the script
+  // verbatim -- a mismatch here fails at runtime as a syntax error inside the pty.
+  const decoded = Buffer.from(args[i + 1], 'base64').toString('utf16le');
+  assert.strictEqual(decoded, shellInitScript('win32'));
+});
+
+test('the emitted prompt sequence is one lib/osc7.js can read back', () => {
+  // The two halves of this handshake live in different languages and only meet at
+  // runtime inside a pty. Pinning the wire format on both sides is what keeps a change to
+  // one from silently freezing tab names again.
+  const emitted = '\x1b]7;file://STIGMERGYLABS/C%3A/Users/rdpuser/Documents/Dev/Ganglion\x07';
+  assert.strictEqual(
+    createCwdTracker().push(emitted),
+    path.win32.join('C:', 'Users', 'rdpuser', 'Documents', 'Dev', 'Ganglion')
+  );
+
+  const script = shellInitScript('win32');
+  assert.match(script, /\[char\]27/);          // ESC
+  assert.match(script, /\]7;file:\/\//);       // OSC 7, file URI
+  assert.match(script, /\[char\]7/);           // BEL terminator
+  assert.match(script, /EscapeDataString/);    // percent-encoding, per segment
 });
 
 // --- signalDir / signalFileFor ------------------------------------------------------
@@ -164,4 +235,41 @@ test('the ingest drain pattern matches what signalFileFor produces', () => {
   const { INGEST_SIGNAL_PATTERN } = require('../lib/platform');
   assert.match(path.basename(signalFileFor('some-uuid-42', 'ingest')), INGEST_SIGNAL_PATTERN);
   assert.doesNotMatch(path.basename(signalFileFor('some-uuid-42', 'status')), INGEST_SIGNAL_PATTERN);
+});
+
+// --- hookCommand --------------------------------------------------------------------
+// Claude Code executes hook commands through a SHELL, and on Windows that shell is the
+// bundled Git bash -- not PowerShell and not cmd. Git bash does not inherit the Windows
+// PATH entry for `C:\Program Files\nodejs`, so a bare `node` fails there with
+// "node: command not found". Because hook failures are non-blocking, every event then
+// dies silently: no status dot ever moves and no session is ever ingested, with the only
+// trace being a line in Claude Code's own transcript. This is exactly the failure the
+// signalFileFor() sharing was meant to make impossible, arriving one layer higher up.
+
+test('hookCommand interpolates an absolute node binary, never a bare `node`', () => {
+  const cmd = hookCommand('C:/repo/hooks/ganglion-signal.js', 'C:/Program Files/nodejs/node.exe');
+  assert.doesNotMatch(cmd, /^node\s/, 'must not rely on `node` being on PATH');
+  assert.match(cmd, /node\.exe/);
+});
+
+test('hookCommand quotes both paths so spaces survive the shell', () => {
+  // The default install path contains a space ("Program Files"); unquoted it splits into
+  // two argv entries and the hook fails in a way that looks like a missing file.
+  const cmd = hookCommand('C:/My Repos/Ganglion/hooks/ganglion-signal.js', 'C:/Program Files/nodejs/node.exe');
+  assert.match(cmd, /"C:\/Program Files\/nodejs\/node\.exe"/);
+  assert.match(cmd, /"C:\/My Repos\/Ganglion\/hooks\/ganglion-signal\.js"/);
+});
+
+test('hookCommand normalises backslashes to forward slashes', () => {
+  // Backslashes would need double-escaping through JSON and would be read as escape
+  // sequences by bash. Node accepts forward slashes on Windows.
+  const cmd = hookCommand(String.raw`C:\repo\hooks\ganglion-signal.js`, String.raw`C:\Program Files\nodejs\node.exe`);
+  assert.doesNotMatch(cmd, /\\/);
+});
+
+test('hookCommand defaults its interpreter to the running node', () => {
+  // process.execPath is always an absolute path to a node that demonstrably works, since
+  // it is the one executing setup-hooks.js.
+  const cmd = hookCommand('/repo/hooks/ganglion-signal.js');
+  assert.ok(cmd.includes(process.execPath.split('\\').join('/')));
 });

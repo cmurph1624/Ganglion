@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { hookCommand } = require('./lib/platform');
 
 const hooksFile = path.join(__dirname, 'hooks', 'ganglion-hooks.json');
 const settingsDir = path.join(os.homedir(), '.claude');
@@ -12,8 +13,8 @@ const ganglionHooks = JSON.parse(fs.readFileSync(hooksFile, 'utf8')).hooks;
 // The hook commands ship with a GANGLION_SIGNAL placeholder because the absolute path to
 // this checkout is only known at install time. Forward slashes are used deliberately: Node
 // accepts them on Windows, and they avoid backslash escaping in both JSON and cmd.exe.
-const signalScript = path.join(__dirname, 'hooks', 'ganglion-signal.js').replace(/\\/g, '/');
-const signalCommand = `node "${signalScript}"`;
+const signalScript = path.join(__dirname, 'hooks', 'ganglion-signal.js');
+const signalCommand = hookCommand(signalScript);
 
 for (const entries of Object.values(ganglionHooks)) {
   for (const entry of entries) {

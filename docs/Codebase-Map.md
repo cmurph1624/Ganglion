@@ -22,6 +22,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 |---|---|---|---|---|
 | Terminal session | browser tab or desktop window → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js` | in-mem replay buffer (512KB/tab) → `~/.ganglion/state.json` |
 | Terminal sizing | any client → WS `pty:resize` | `handleMessage`, `applySize` | `lib/pty-sizing.js` | in-mem registry (per client, per tab) |
+| Tab cwd / auto-name | shell prompt emits OSC 7 → `p.onData`; renderer polls WS `pty:cwd` every 5s | `spawnPty` (tracker), `handleMessage` (`pty:cwd`, `pty:reponame`) | `lib/osc7.js`; `lib/platform.js` (`shellArgs`, `cwdProbe`) | in-mem per tab → `state.json` |
 | Status indicator | Claude hook writes `<tmp>/ganglion-<tab>-status` | `attachStatusWatcher` (`fs.watch`) → broadcast `tab:status` | `lib/platform.js`; `hooks/`; `renderer.js` recolor | none (transient) |
 | Memory capture | `Stop`/`SessionEnd` hook writes `<tmp>/ganglion-<tab>-ingest` | `attachIngestWatcher`, `processIngestSignal` | `memory/ingest.js` | `sessions`, `turns` (+`turns_fts`) |
 | Memory recall | Ctrl/Cmd+K overlay → WS `memory:search` | `handleMessage` (`memory:*`) | `memory/search.js`; `renderer/memory-panel.js` | reads `turns_fts` + `sessions_fts` + `documents_fts` |
@@ -35,6 +36,11 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   two halves ever disagree about the directory, Ganglion boots and terminals work while status
   dots never update and no session is ever ingested — silently. Never hardcode `/tmp`.
 - **Hooks no-op without `GANGLION_TAB_ID`** — running `claude` outside Ganglion writes nothing.
+- **The OSC 7 wire format is a two-language handshake** — `shellInitScript()` (PowerShell) writes
+  it and `lib/osc7.js` (JS) reads it, and they only meet at runtime inside a pty. Windows has no
+  readable per-process cwd, so this is the *only* cwd source there; break either side and tab
+  names silently freeze with nothing in the logs. `test/platform.test.js` pins the format from
+  both ends. The wrapper must also keep calling through to the profile's own `prompt`.
 - **Both front-ends mirror one set of ptys** — `broadcast()` fans pty output to every client. The
   pty is sized to the **minimum over attached clients** (`lib/pty-sizing.js`), tmux-style, so the
   grid fits inside every viewport. Never resize a pty straight from one client's message.
@@ -54,6 +60,18 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   testing modifiers themselves. When they disagreed, Ctrl+K fired twice (xterm wrote `^K` to the
   pty *and* the overlay opened) — and `preventDefault` cannot undo that, since it does not stop
   propagation and xterm has already acted. Add an app shortcut in that module, not at a call site.
+- **Ctrl+C is copy-or-interrupt, and the terminal does the copying** — with a (non-whitespace)
+  selection it copies and the selection is cleared so the *next* Ctrl+C is SIGINT again; with no
+  selection it is SIGINT. Ctrl+Shift+C always copies. The copy cannot be delegated to the browser:
+  xterm keeps its selection in its own model rather than as a DOM selection, so there is usually
+  nothing native to copy — and the generic control-key branch `preventDefault`s the chord anyway,
+  which is why Ctrl+C could previously only ever interrupt. Whether a selection exists is passed
+  *into* the policy (`classifyTerminalKey(e, {hasSelection})`) so the module stays pure; when it is
+  ambiguous, SIGINT wins, because swallowing an interrupt is worse than an unwanted one.
+- **Clipboard writes need the execCommand fallback** — `navigator.clipboard` requires a secure
+  context, and the Mac front-end reaches Ganglion as `http://<lan-ip>:3000`, which is not one. A
+  copy written against the async API alone works locally and in Electron and silently does nothing
+  from the Mac. `renderer/clipboard.js` covers both; verified end to end in Electron.
 - **Ptys survive disconnect** — buffered + replayed on reconnect (`pty:replay`); killed only on explicit `pty:kill`.
 - **State saved on every change** to `~/.ganglion/state.json`.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added
@@ -75,6 +93,8 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `renderer/client.js` | WebSocket client abstraction. |
 | `renderer/memory-panel.js` | Global recall overlay (🧠 / Ctrl+K); cited results, click-to-expand context. |
 | `renderer/terminal-keys.js` | Pure key policy shared by the terminals and the overlay: pty vs browser vs app. Dual-loaded (`<script>` + `require`). |
+| `renderer/clipboard.js` | Clipboard write with an execCommand fallback for the non-secure-context front-end. Injected deps, so testable with no DOM. |
+| `renderer/terminal-copy.js` | Wires the policy + clipboard onto a live xterm. Split out of `renderer.js` so the shipped copy path can be driven without booting the app. |
 | `renderer/styles.css` | Styles. |
 | `memory/ingest.js` | Incremental ingest of transcript JSONL → `turns` (byte-offset tracked; `INSERT OR IGNORE` on `uuid`). |
 | `memory/search.js` | FTS5 keyword recall over `turns` + `documents`; two-stage retrieve/rank; structured filters. |
@@ -88,6 +108,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `ecosystem.config.js` | pm2 process definition (sets distiller env). |
 | `test/*.test.js` | Node test-runner suite (`npm test`). |
 | `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
+| `lib/osc7.js` | Parses OSC 7 cwd announcements out of pty output. The only cwd source on Windows. |
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing HTTP health probe. |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against the current displays. |
