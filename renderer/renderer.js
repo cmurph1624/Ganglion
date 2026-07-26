@@ -104,12 +104,28 @@ function makeTerminalConfig() {
       cursorAccent: '#1e1e1e',
       selectionBackground: '#264f78'
     },
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    // Menlo/Monaco are macOS-only, so on Windows this stack fell through to Courier New --
+    // a proportionally-designed print face that renders box-drawing and powerline glyphs
+    // badly in a terminal. Cascadia Mono (ships with Windows Terminal) and Consolas (every
+    // Windows) sit ahead of it; the macOS entries stay first so the Mac browser is unchanged.
+    fontFamily: 'Menlo, Monaco, "Cascadia Mono", Consolas, "Courier New", monospace',
     fontSize: 13,
     cursorBlink: true,
     scrollback: 10000,
     allowProposedApi: true
   };
+}
+
+// Both terminals in a tab (left, and the optional right split) get the same key policy.
+// It used to be copy-pasted into each call site, which is how Ctrl+K came to be wrong in
+// two places at once. The decision itself lives in terminal-keys.js so the memory overlay
+// can read the same rule -- see the header there.
+function attachKeyPolicy(term) {
+  term.attachCustomKeyEventHandler((e) => {
+    const { toTerminal, preventDefault } = window.ganglionTerminalKeys.classifyTerminalKey(e);
+    if (preventDefault) e.preventDefault();
+    return toTerminal;
+  });
 }
 
 function attachImagePasteHandler(hostEl, tabId) {
@@ -268,15 +284,7 @@ function renderTab(tabData) {
   term.loadAddon(fitAddon);
   term.open(termHost);
 
-  term.attachCustomKeyEventHandler((e) => {
-    if (e.type !== 'keydown') return true;
-    if (e.ctrlKey && !e.metaKey) {
-      if (e.key === 'v' || e.key === 'V' || (e.shiftKey && e.key === 'C')) return false;
-      e.preventDefault();
-      return true;
-    }
-    return true;
-  });
+  attachKeyPolicy(term);
 
   attachImagePasteHandler(termHost, tabData.id);
 
@@ -355,15 +363,7 @@ function spawnRightTerminal(entry) {
   termRight.loadAddon(fitAddonRight);
   termRight.open(entry.termHostRight);
 
-  termRight.attachCustomKeyEventHandler((e) => {
-    if (e.type !== 'keydown') return true;
-    if (e.ctrlKey && !e.metaKey) {
-      if (e.key === 'v' || e.key === 'V' || (e.shiftKey && e.key === 'C')) return false;
-      e.preventDefault();
-      return true;
-    }
-    return true;
-  });
+  attachKeyPolicy(termRight);
 
   attachImagePasteHandler(entry.termHostRight, rightId);
 

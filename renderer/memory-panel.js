@@ -200,8 +200,14 @@
   overlay.querySelector('.mem-go').addEventListener('click', runSearch);
   q.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
   [sourceSel, projectSel].forEach((el) => el.addEventListener('change', () => { if (q.value.trim()) runSearch(); }));
+  // The shortcut test is shared with the terminals (terminal-keys.js) rather than
+  // rewritten here. When they disagreed, a focused terminal answered Ctrl+K twice: xterm
+  // wrote ^K to the pty and readline killed to end of line, and then this handler opened
+  // the overlay. preventDefault below cannot undo that -- it does not stop propagation,
+  // and xterm has already acted -- so the terminal has to decline the key, which it can
+  // only do reliably if it is asking the same question.
   document.addEventListener('keydown', (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); toggle(); }
+    if (window.ganglionTerminalKeys.isMemoryShortcut(e)) { e.preventDefault(); toggle(); }
     else if (e.key === 'Escape' && overlay.classList.contains('open')) close();
   });
 })();
