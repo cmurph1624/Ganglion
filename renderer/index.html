@@ -20,6 +20,11 @@
   <!-- Shared key policy: must load before both consumers (renderer.js terminals and the
        memory overlay) so neither has to re-derive which keys belong to the app. -->
   <script src="terminal-keys.js"></script>
+  <!-- Clipboard writer, used by the terminal copy binding. Separate because the async
+       Clipboard API is unavailable in the plain-HTTP Mac front-end. -->
+  <script src="clipboard.js"></script>
+  <!-- Binds the two together onto a live xterm; must load before renderer.js uses it. -->
+  <script src="terminal-copy.js"></script>
   <script src="renderer.js"></script>
   <script src="memory-panel.js"></script>
 </body>

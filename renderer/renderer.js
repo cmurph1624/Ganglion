@@ -117,15 +117,11 @@ function makeTerminalConfig() {
 }
 
 // Both terminals in a tab (left, and the optional right split) get the same key policy.
-// It used to be copy-pasted into each call site, which is how Ctrl+K came to be wrong in
-// two places at once. The decision itself lives in terminal-keys.js so the memory overlay
-// can read the same rule -- see the header there.
+// The decision lives in terminal-keys.js so the memory overlay reads the same rule, and the
+// wiring lives in terminal-copy.js so it can be driven without booting the app -- see the
+// headers there.
 function attachKeyPolicy(term) {
-  term.attachCustomKeyEventHandler((e) => {
-    const { toTerminal, preventDefault } = window.ganglionTerminalKeys.classifyTerminalKey(e);
-    if (preventDefault) e.preventDefault();
-    return toTerminal;
-  });
+  window.ganglionTerminalCopy.attachKeyPolicy(term);
 }
 
 function attachImagePasteHandler(hostEl, tabId) {

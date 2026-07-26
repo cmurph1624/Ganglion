@@ -119,16 +119,66 @@ test('Ctrl+Shift+V is left to the browser too', () => {
   assert.strictEqual(result.toTerminal, false);
 });
 
-test('Ctrl+Shift+C is left to the browser so copy works', () => {
-  const result = classifyTerminalKey(ev({ key: 'C', ctrlKey: true, shiftKey: true }));
-  assert.strictEqual(result.toTerminal, false);
-  assert.strictEqual(result.preventDefault, false);
+// --- copy: Ctrl+C means two different things -------------------------------------------
+// Handing clipboard keys to "the browser" was wrong twice over. xterm keeps its selection
+// in its own model rather than as a DOM selection, so there is frequently no native
+// selection for the browser to copy; and Ctrl+C was additionally preventDefault()ed by the
+// generic control-key branch below, so no copy event ever fired anyway. The result was a
+// Ctrl+C that could only ever send SIGINT. Every terminal emulator resolves this the same
+// way: with a selection it copies, without one it interrupts.
+
+test('Ctrl+C with a selection copies instead of interrupting', () => {
+  const result = classifyTerminalKey(ev({ key: 'c', ctrlKey: true }), { hasSelection: true });
+  assert.strictEqual(result.copySelection, true);
+  assert.strictEqual(result.toTerminal, false, 'SIGINT must not also be sent');
 });
 
-test('Ctrl+C without shift is SIGINT, not copy', () => {
-  // The whole reason copy is bound to Ctrl+Shift+C in a terminal.
-  const result = classifyTerminalKey(ev({ key: 'c', ctrlKey: true }));
+test('Ctrl+C with a selection suppresses the browser default', () => {
+  // Otherwise the browser copy path can also fire and we race our own write.
+  const result = classifyTerminalKey(ev({ key: 'c', ctrlKey: true }), { hasSelection: true });
+  assert.strictEqual(result.preventDefault, true);
+});
+
+test('Ctrl+C without a selection is still SIGINT', () => {
+  // The behaviour that must not regress: interrupting a running Claude is what this key is
+  // for, and it has to keep working without looking at the clipboard first.
+  const result = classifyTerminalKey(ev({ key: 'c', ctrlKey: true }), { hasSelection: false });
   assert.strictEqual(result.toTerminal, true);
+  assert.strictEqual(result.copySelection, false);
+});
+
+test('Ctrl+C defaults to SIGINT when no selection state is supplied', () => {
+  // A caller that forgets the second argument must fail towards the safe answer: sending an
+  // interrupt that was not wanted is recoverable, swallowing one is not.
+  assert.strictEqual(classifyTerminalKey(ev({ key: 'c', ctrlKey: true })).toTerminal, true);
+  assert.strictEqual(classifyTerminalKey(ev({ key: 'c', ctrlKey: true })).copySelection, false);
+});
+
+test('Ctrl+Shift+C copies whether or not the terminal has a selection', () => {
+  // The explicit copy binding. With nothing selected it simply copies nothing, which is
+  // better than falling through to SIGINT on a key the user pressed meaning "copy".
+  for (const hasSelection of [true, false]) {
+    const result = classifyTerminalKey(ev({ key: 'C', ctrlKey: true, shiftKey: true }), { hasSelection });
+    assert.strictEqual(result.copySelection, true, String(hasSelection));
+    assert.strictEqual(result.toTerminal, false, String(hasSelection));
+  }
+});
+
+test('Ctrl+Shift+C suppresses the browser default', () => {
+  // In Chrome this chord opens the DevTools element picker, which is emphatically not what
+  // someone pressing the terminal copy binding wants.
+  const result = classifyTerminalKey(ev({ key: 'C', ctrlKey: true, shiftKey: true }), { hasSelection: true });
+  assert.strictEqual(result.preventDefault, true);
+});
+
+test('copySelection is false for every key that is not a copy binding', () => {
+  // Pins the blast radius: a selection sitting in the terminal must not change what any
+  // other key does. Ctrl+A in particular is readline's start-of-line, not select-all.
+  for (const key of ['a', 'e', 'u', 'w', 'v', 'd', 'l', 'r']) {
+    const result = classifyTerminalKey(ev({ key, ctrlKey: true }), { hasSelection: true });
+    assert.strictEqual(result.copySelection, false, key);
+  }
+  assert.strictEqual(classifyTerminalKey(ev({ key: 'c' }), { hasSelection: true }).copySelection, false);
 });
 
 // --- ordinary control keys reach the shell, not the browser -----------------------------

@@ -50,37 +50,60 @@
    * Decide what happens to a key event that landed on a terminal.
    *
    * @param {{type?: string, key?: unknown, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean}} e
-   * @returns {{toTerminal: boolean, preventDefault: boolean}}
+   * @param {{hasSelection?: boolean}} [ctx] What the terminal knows that the event does not.
+   * @returns {{toTerminal: boolean, preventDefault: boolean, copySelection: boolean}}
    *   `toTerminal` is the value to return from attachCustomKeyEventHandler: true lets
    *   xterm process the key (and so reach the pty), false makes xterm ignore it and leaves
-   *   the event to whoever else is listening.
+   *   the event to whoever else is listening. `copySelection` asks the caller to put the
+   *   terminal's selection on the clipboard itself.
    */
-  function classifyTerminalKey(e) {
+  function classifyTerminalKey(e, ctx = {}) {
+    const pass = { toTerminal: true, preventDefault: false, copySelection: false };
+
     // Only keydown is ours. xterm tracks modifier state on keyup, so declining one would
     // leave it believing Ctrl is still held.
-    if (!e || e.type !== 'keydown') return { toTerminal: true, preventDefault: false };
+    if (!e || e.type !== 'keydown') return pass;
 
     // App shortcuts outrank both the pty and the browser. No preventDefault: the overlay's
     // own handler does that when it acts, so the suppression stays next to the behaviour
     // instead of being split across two files again.
-    if (isMemoryShortcut(e)) return { toTerminal: false, preventDefault: false };
+    if (isMemoryShortcut(e)) return { toTerminal: false, preventDefault: false, copySelection: false };
 
     // `!metaKey` matters: on a Mac, Cmd+C / Cmd+V arrive with metaKey set, and swallowing
     // those would break copy and paste in the browser front-end.
     if (e.ctrlKey && !e.metaKey) {
-      // Clipboard bindings belong to the browser. Ctrl+C without shift is left alone
-      // below, because in a terminal that is SIGINT.
       const key = typeof e.key === 'string' ? e.key : '';
-      if (key === 'v' || key === 'V' || (e.shiftKey && key === 'C')) {
-        return { toTerminal: false, preventDefault: false };
+
+      // Copy is performed by us, not delegated. Two things made "leave it to the browser"
+      // wrong: xterm holds its selection in its own model rather than as a DOM selection,
+      // so there is usually nothing native to copy; and Ctrl+C additionally fell through to
+      // the generic control-key branch below and got preventDefault()ed, so no copy event
+      // could fire even in principle. Ctrl+C was therefore SIGINT and nothing else.
+      //
+      // The rule every terminal emulator settled on: with a selection Ctrl+C copies,
+      // without one it interrupts. Ctrl+Shift+C always copies, and is suppressed because in
+      // Chrome that chord opens the DevTools element picker.
+      if (key === 'c' || key === 'C') {
+        if (e.shiftKey || ctx.hasSelection === true) {
+          return { toTerminal: false, preventDefault: true, copySelection: true };
+        }
+        // No selection: this is an interrupt, and the single most important key in a tab
+        // running Claude. Fall through to the control-key branch.
       }
+
+      // Paste still belongs to the browser -- it arrives as a paste event, which xterm and
+      // the image-paste handler in renderer.js both already listen for.
+      if (key === 'v' || key === 'V') {
+        return { toTerminal: false, preventDefault: false, copySelection: false };
+      }
+
       // Everything else the user typed with Ctrl was meant for the shell. preventDefault
       // stops the browser acting on Ctrl+W/T/L/R as well, which is the main reason the
       // desktop shell exists -- but the browser front-end wants it too.
-      return { toTerminal: true, preventDefault: true };
+      return { toTerminal: true, preventDefault: true, copySelection: false };
     }
 
-    return { toTerminal: true, preventDefault: false };
+    return pass;
   }
 
   const api = { classifyTerminalKey, isMemoryShortcut };
