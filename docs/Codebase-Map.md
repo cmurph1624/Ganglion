@@ -49,6 +49,11 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   to enable; set in `ecosystem.config.js` for the pm2 process).
 - **Distiller recursion guard** — the `claude -p` subprocess runs with `GANGLION_TAB_ID` unset
   and `GANGLION_DISTILL=1`; the ingest hook no-ops under either, so distillation never re-ingests itself.
+- **One key, one owner** — `renderer/terminal-keys.js` decides whether a keydown belongs to the
+  pty, the browser, or the app; `renderer.js` and `memory-panel.js` both ask it rather than
+  testing modifiers themselves. When they disagreed, Ctrl+K fired twice (xterm wrote `^K` to the
+  pty *and* the overlay opened) — and `preventDefault` cannot undo that, since it does not stop
+  propagation and xterm has already acted. Add an app shortcut in that module, not at a call site.
 - **Ptys survive disconnect** — buffered + replayed on reconnect (`pty:replay`); killed only on explicit `pty:kill`.
 - **State saved on every change** to `~/.ganglion/state.json`.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added
@@ -69,6 +74,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `renderer/renderer.js` | Tab UI, xterm.js wiring, markdown rendering, draggable divider. |
 | `renderer/client.js` | WebSocket client abstraction. |
 | `renderer/memory-panel.js` | Global recall overlay (🧠 / Ctrl+K); cited results, click-to-expand context. |
+| `renderer/terminal-keys.js` | Pure key policy shared by the terminals and the overlay: pty vs browser vs app. Dual-loaded (`<script>` + `require`). |
 | `renderer/styles.css` | Styles. |
 | `memory/ingest.js` | Incremental ingest of transcript JSONL → `turns` (byte-offset tracked; `INSERT OR IGNORE` on `uuid`). |
 | `memory/search.js` | FTS5 keyword recall over `turns` + `documents`; two-stage retrieve/rank; structured filters. |

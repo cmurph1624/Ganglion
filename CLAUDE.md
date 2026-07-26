@@ -59,6 +59,7 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `renderer/index.html` | App shell |
 | `renderer/renderer.js` | Tab UI, xterm.js wiring, markdown rendering, divider |
 | `renderer/client.js` | WebSocket client abstraction |
+| `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
 | `renderer/styles.css` | Styles |
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy) |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |

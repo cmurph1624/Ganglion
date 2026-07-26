@@ -62,6 +62,13 @@ The shell attaches to whatever server is already running and **never starts one*
 
 For day-to-day use, make a shortcut rather than a `.bat` (which would flash a console window):
 
+```powershell
+.\scripts\make-shortcut.ps1              # Desktop
+.\scripts\make-shortcut.ps1 -StartMenu   # Desktop + Start Menu\Programs
+```
+
+Unelevated, and idempotent — an existing shortcut is left alone unless you pass `-Force`. It writes the same three fields you would otherwise type into the properties dialog:
+
 - **Target:** `…\Ganglion\node_modules\electron\dist\electron.exe`
 - **Arguments:** `electron\main.js`
 - **Start in:** the repo root
