@@ -68,6 +68,13 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   which is why Ctrl+C could previously only ever interrupt. Whether a selection exists is passed
   *into* the policy (`classifyTerminalKey(e, {hasSelection})`) so the module stays pure; when it is
   ambiguous, SIGINT wins, because swallowing an interrupt is worse than an unwanted one.
+- **In a tab running Claude Code, you must Shift+drag to select** — Claude enables mouse
+  tracking (`?1000`/`?1002`/`?1003`/`?1006`), so xterm forwards every mouse event to the app and
+  a plain drag selects *nothing*. `shouldForceSelection()` treats Shift as the override on
+  non-Mac. The failure mode is confusing rather than obvious: the copy bindings work fine and
+  faithfully copy the empty selection, so the key appears dead. On the Mac front-end the
+  equivalent override is Option+drag, which additionally requires the `macOptionClickForcesSelection`
+  terminal option — currently unset, so Option+drag does not force a selection there yet.
 - **Clipboard writes need the execCommand fallback** — `navigator.clipboard` requires a secure
   context, and the Mac front-end reaches Ganglion as `http://<lan-ip>:3000`, which is not one. A
   copy written against the async API alone works locally and in Electron and silently does nothing
