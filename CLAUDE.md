@@ -61,7 +61,7 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `renderer/client.js` | WebSocket client abstraction |
 | `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
 | `renderer/clipboard.js` | Clipboard writer with an execCommand fallback (the Mac front-end is not a secure context) |
-| `renderer/terminal-copy.js` | Binds the key policy + clipboard onto a live xterm (selection → copy, clear after) |
+| `renderer/terminal-copy.js` | Binds the key policy + clipboard onto a live xterm: copy-on-selection (no key press), plus Ctrl+C copy-then-clear |
 | `renderer/styles.css` | Styles |
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy) |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
@@ -73,6 +73,7 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary |
 | `lib/osc7.js` | Reads the shell's OSC 7 cwd announcements out of the pty stream (the Windows cwd source) |
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
+| `lib/tab-state.js` | Splits shared tab data (server-owned) from per-client view state (localStorage); applies per-tab mutations. Loaded by `server.js`, by the tests, and by the browser via the `/tab-state.js` route |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
 | `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |
@@ -88,8 +89,10 @@ All messages are JSON. Key types:
 | Type | Direction | Purpose |
 |---|---|---|
 | `state:load` | client → server | Load persisted tab state |
-| `state:loaded` | server → client | Response with state + replay buffers |
-| `state:save` | client → server | Persist tab state |
+| `state:loaded` | server → client | **Shared** tab state + replay buffers. Carries no view state — the client merges its own from `localStorage` |
+| `tab:created` | both ways | A tab was opened. Client → server to register it; rebroadcast to every client (including the sender) so the other front-end draws it |
+| `tab:updated` | both ways | A shared field changed (name, cwd, markdownFile, autoName). A patch that changes nothing is dropped rather than rebroadcast — `syncCwds()` polls in every front-end at once |
+| `tab:closed` | both ways | A tab was closed. The originating client also sends `pty:kill`; receivers only tear down their view |
 | `pty:spawn` | client → server | Spawn a new pty for a tab |
 | `pty:write` | client → server | Send keystrokes to pty |
 | `pty:resize` | client → server | Report this client's viewport. The pty is set to the **minimum over attached clients** (`lib/pty-sizing.js`), not to the last message — otherwise two mirrored windows of different sizes fight |
@@ -153,14 +156,24 @@ Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks 
 Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Ganglion).
 
 ## State Persistence
-Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.ganglion/state.json` on every change and restored on load.
+Tab state is split in two, because the old single object was holding two different kinds of thing and the two front-ends raced over it (`state:save` was a blind whole-file overwrite: last writer won).
 
-> **Known gap with two front-ends connected.** `state:save` is a blind whole-file overwrite, so the browser and the desktop shell race: last writer wins. In practice this shows up as divider/panel positions ping-ponging (cosmetic), and — across a restart — a tab created in one front-end being dropped by the other's stale copy. The tab *list* is also not live-synced: a tab opened in one window does not appear in the other until reload, and closing one leaves a stale `[process exited]` tab. The planned fix splits shared tab data from per-client view state (the latter into `localStorage`), avoiding a merge protocol entirely.
+| | Lives in | Owner | Contents |
+|---|---|---|---|
+| **Shared** | `~/.ganglion/state.json` | the server | `id`, `name`, `cwd`, `autoName`, `markdownFile` — what a tab *is*. Both windows must agree |
+| **View** | `localStorage` (`ganglion.viewState`) | each front-end | `splitPosition`, `panelMode`, `activeTabId` — how *this* window is looking at it. Two windows disagreeing is correct, not a conflict |
+
+Split that way there is nothing left to reconcile — no merge protocol, no last-writer-wins. Clients send per-tab mutations (`tab:created` / `tab:updated` / `tab:closed`); the server applies each to the shared state, persists it, and rebroadcasts to **every** client including the sender. Re-applying a mutation is a no-op, so the sender handles its own echo through the same path it handles the other window's changes.
+
+The rule lives once, in `lib/tab-state.js`, which the server requires and the browser loads over the `/tab-state.js` route — the two sides cannot disagree about which fields are per-client. Legacy state files are migrated on load: `splitTabState()` pulls the view keys out and drops them.
+
+Consequences: a tab opened, renamed, or closed in one window now appears in the other **without a reload**, and dividers no longer ping-pong. Note the view half is per *browser profile*, so the Mac browser and the desktop shell keep genuinely independent layouts.
 
 ## Key Constraints
 - Shells run **unelevated**; anything needing elevation must be handed to Chris as a pasteable block
 - pm2 must be invoked as `node <prefix>\node_modules\pm2\bin\pm2` from an **elevated** shell — not via `pm2.cmd`, whose bare-`node` fallback fails there (see How to Run)
 - Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command
 - Scripts needing env vars must source `.env` explicitly
+- **Ganglion refuses the application's request for the mouse.** Claude Code sends `CSI ? 1000/1002/1003 h`; `refuseMouseReporting()` swallows it, so tracking is never enabled and a plain drag always selects. The cost is deliberate: clicks inside Claude's UI don't register, and the wheel scrolls xterm's scrollback rather than Claude's view. Selected text is copied automatically — no Ctrl+C needed. See `docs/Codebase-Map.md`
 - **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.
 - `pty:cwd` on Windows comes from the **shell**, not the OS. Windows exposes no readable per-process cwd, so `cwdProbe()` still returns null there; instead `shellArgs()` installs a prompt wrapper that emits OSC 7 and the server reads it back off the pty stream (`lib/osc7.js`). Consequences: the cwd only advances when a **prompt is drawn** (a tab sitting inside a long-running `claude` reports the directory it last prompted in), and a shell spawned *inside* the pty is not wrapped. The renderer polls `pty:cwd` every 5s, so a `cd` renames the tab within ~5s

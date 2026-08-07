@@ -23,6 +23,7 @@ const {
 const { createCwdTracker } = require('./lib/osc7');
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
+const { splitTabState, applyTabMutation } = require('./lib/tab-state');
 
 // Distillation makes an LLM call per session to write a narrative session note into
 // sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
@@ -74,7 +75,13 @@ app.use(express.static(path.join(__dirname, 'renderer')));
 app.get('/xterm.css', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/css/xterm.css')));
 app.get('/xterm.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/lib/xterm.js')));
 app.get('/addon-fit.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-fit/lib/addon-fit.js')));
+app.get('/addon-webgl.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-webgl/lib/addon-webgl.js')));
+app.get('/addon-unicode11.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-unicode11/lib/addon-unicode11.js')));
 app.get('/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
+// Shared logic, not a vendored asset: the renderer must split shared from view state by the
+// same rule this process does, so both sides load the one copy in lib/ rather than keeping
+// two definitions in step by hand.
+app.get('/tab-state.js', (_req, res) => res.sendFile(path.join(__dirname, 'lib/tab-state.js')));
 
 app.post('/upload-image', express.raw({ type: 'image/*', limit: '10mb' }), (req, res) => {
   const ext = (req.headers['content-type'] || 'image/png').split('/')[1] || 'png';
@@ -102,17 +109,52 @@ function broadcast(msg) {
   }
 }
 
+// The SHARED half of tab state -- what each tab is, not how any one window is looking at
+// it. Held in memory and authoritative: clients send per-tab mutations, this applies them
+// and broadcasts the result, so two front-ends converge without either shipping a stale
+// copy of the tabs it did not touch. See lib/tab-state.js.
+let sharedState = loadState();
+
 function loadState() {
+  let raw;
   try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
+    raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   } catch {
-    return { tabs: [], activeTabId: null };
+    return { tabs: [] };
   }
+  // Pre-split state files carried per-client keys (splitPosition, panelMode, activeTabId) in
+  // the same object. Splitting on load migrates them in place -- the view half is dropped
+  // here and each front-end rebuilds its own from localStorage.
+  return splitTabState(raw).shared;
 }
 
 function saveState(state) {
   fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+}
+
+/**
+ * Apply one client's tab mutation, persist it, and tell everyone.
+ *
+ * Rebroadcast goes to ALL clients including the sender: applyTabMutation is idempotent for
+ * a mutation already applied, so the originating window can handle its own echo with the
+ * same code path it uses for the other window's changes. Broadcasting the RESULT rather
+ * than the request is what stops a client's view keys reaching the other front-end.
+ */
+function applyAndBroadcastTabMutation(mutation) {
+  const { state, changed } = applyTabMutation(sharedState, mutation);
+  if (!changed) return;
+
+  sharedState = state;
+  saveState(sharedState);
+
+  if (mutation.type === 'tab:closed') {
+    broadcast({ type: 'tab:closed', tabId: mutation.tabId });
+    return;
+  }
+
+  const id = mutation.type === 'tab:created' ? mutation.tab.id : mutation.tabId;
+  broadcast({ type: mutation.type, tabId: id, tab: sharedState.tabs.find((t) => t.id === id) });
 }
 
 function statusFileFor(tabId) {
@@ -361,15 +403,22 @@ function handleMessage(ws, msg) {
 
   switch (parsed.type) {
     case 'state:load': {
-      const state = loadState();
-      ws.send(JSON.stringify({ type: 'state:loaded', reqId: parsed.reqId, state }));
+      // Shared state only. The client merges its own view state (divider positions, which
+      // tab is active) from localStorage -- the server has no opinion about those and
+      // deliberately never stores them.
+      ws.send(JSON.stringify({ type: 'state:loaded', reqId: parsed.reqId, state: sharedState }));
       for (const [tabId, buf] of ptyBuffers) {
         if (buf) ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: buf }));
       }
       break;
     }
-    case 'state:save': {
-      saveState(parsed.state);
+    // Per-tab mutations, replacing the old blind whole-file `state:save` overwrite. Two
+    // front-ends used to race on that: divider positions ping-ponged, and across a restart
+    // a tab created in one window was dropped by the other's stale copy.
+    case 'tab:created':
+    case 'tab:updated':
+    case 'tab:closed': {
+      applyAndBroadcastTabMutation(parsed);
       break;
     }
     case 'pty:spawn': {

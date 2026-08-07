@@ -1,10 +1,19 @@
 const api = window.ganglionAPI;
 const { Terminal } = window;
 const FitAddonCtor = window.FitAddon.FitAddon;
+const { splitTabState, mergeTabState, DEFAULT_VIEW } = window.ganglionTabState;
 
+// `state.tabs` holds MERGED tabs: the server's shared fields plus this window's view keys.
+// Every mutation below edits those objects in place, because `tabs.get(id).tabData` aliases
+// them and the DOM closures captured the alias -- so replacing a tab object would silently
+// detach the tab bar from the state it is drawing.
 let state = { tabs: [], activeTabId: null };
 const tabs = new Map();
-let saveTimer = null;
+let viewSaveTimer = null;
+
+// Per-client. Two front-ends SHOULD disagree about divider positions and which tab is
+// active, so none of this goes over the wire -- see lib/tab-state.js.
+const VIEW_STATE_KEY = 'ganglion.viewState';
 
 function uuid() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
@@ -14,14 +23,30 @@ function uuid() {
   });
 }
 
-function persistState() {
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => api.saveState(state), 200);
+function loadViewState() {
+  try {
+    return JSON.parse(localStorage.getItem(VIEW_STATE_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function writeViewState() {
+  // splitTabState() already knows which keys are per-client; asking it here keeps the two
+  // halves defined in exactly one place.
+  try {
+    localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(splitTabState(state).view));
+  } catch {}
+}
+
+function persistView() {
+  if (viewSaveTimer) clearTimeout(viewSaveTimer);
+  viewSaveTimer = setTimeout(writeViewState, 200);
 }
 
 async function init() {
-  state = (await api.loadState()) || { tabs: [], activeTabId: null };
-  if (!state.tabs) state.tabs = [];
+  // The server sends shared state only; this window's view of it comes from localStorage.
+  state = mergeTabState(await api.loadState(), loadViewState());
 
   if (state.tabs.length === 0) {
     addTab();
@@ -59,6 +84,54 @@ async function init() {
     }
   });
 
+  // A tab created, renamed, or closed anywhere -- including in this window, which sees its
+  // own change come back off the broadcast. Applying both through one path is what makes
+  // the two front-ends converge; the guards below are what make the echo harmless.
+  api.onTabMutation((msg) => {
+    switch (msg.type) {
+      case 'tab:created': {
+        if (!msg.tab || tabs.has(msg.tab.id)) break;
+        // Arrived from the other window, so this client has no stored view for it.
+        const tabData = { ...msg.tab, ...DEFAULT_VIEW };
+        state.tabs.push(tabData);
+        renderTab(tabData);
+        // renderTab() draws the pane but does not select it. With nothing else active --
+        // which is exactly the state this window is left in when the other one closes the
+        // last tab -- the new pane would render without the `active` class and show blank.
+        // Otherwise leave focus alone: a tab opening elsewhere must not yank this window
+        // off whatever it is doing.
+        if (!state.activeTabId) setActive(tabData.id);
+        break;
+      }
+      case 'tab:updated': {
+        const entry = tabs.get(msg.tabId);
+        if (!entry || !msg.tab) break;
+        // msg.tab carries shared fields only, so assigning over the merged object leaves
+        // this window's divider position and panel mode untouched.
+        const previousFile = entry.tabData.markdownFile;
+        Object.assign(entry.tabData, msg.tab);
+        entry.titleEl.textContent = entry.tabData.name;
+
+        // The markdown pane is shared state pointing at a file, so a file opened in the
+        // other window has to be reflected here -- but only redrawn if this window happens
+        // to have the pane open.
+        if (entry.tabData.markdownFile && entry.tabData.markdownFile !== previousFile) {
+          entry.mdInput.value = entry.tabData.markdownFile;
+          if (entry.tabData.panelMode === 'markdown') loadMarkdownFile(msg.tabId);
+        }
+        break;
+      }
+      case 'tab:closed': {
+        // Closed elsewhere: tear down the local view, but leave the pty alone -- the window
+        // that initiated it already sent pty:kill, and this window replacing an empty tab
+        // strip would race the tab:created the other one is about to broadcast.
+        if (tabs.has(msg.tabId)) teardownTab(msg.tabId, { replaceIfEmpty: false });
+        break;
+      }
+    }
+    persistView();
+  });
+
   document.getElementById('new-tab-btn').addEventListener('click', () => addTab());
 
   window.addEventListener('resize', () => {
@@ -67,7 +140,9 @@ async function init() {
 
   setInterval(syncCwds, 5000);
   window.addEventListener('beforeunload', () => {
-    api.saveState(state);
+    // localStorage only, and synchronous -- a WebSocket send here is not guaranteed to
+    // flush before the page goes away.
+    writeViewState();
   });
 }
 
@@ -80,19 +155,20 @@ function fitAll(t) {
 
 function addTab() {
   const id = uuid();
-  const tabData = {
+  const shared = {
     id,
     name: `Tab ${state.tabs.length + 1}`,
     cwd: null,
-    splitPosition: 0.5,
-    panelMode: 'hidden',
     markdownFile: null,
     autoName: true
   };
+  const tabData = { ...shared, ...DEFAULT_VIEW };
   state.tabs.push(tabData);
   renderTab(tabData);
   setActive(id);
-  persistState();
+  // Only the shared half goes to the server; the view half is already in tabData and will
+  // reach localStorage via setActive() -> persistView().
+  api.tabCreated(shared);
 }
 
 function makeTerminalConfig() {
@@ -116,12 +192,45 @@ function makeTerminalConfig() {
   };
 }
 
-// Both terminals in a tab (left, and the optional right split) get the same key policy.
-// The decision lives in terminal-keys.js so the memory overlay reads the same rule, and the
+// Both terminals in a tab (left, and the optional right split) get the same bindings. The
+// key decision lives in terminal-keys.js so the memory overlay reads the same rule, and the
 // wiring lives in terminal-copy.js so it can be driven without booting the app -- see the
 // headers there.
-function attachKeyPolicy(term) {
+//
+// Order matters only in that the mouse refusal must be registered before the pty is spawned
+// below, or the first Claude Code prompt turns tracking on before anyone is listening.
+//
+// The two selection bindings are a pair. Refusing the mouse is what makes a plain drag
+// select anything at all in a tab running Claude; copy-on-selection is what makes that
+// selection worth having without reaching for a key that also means SIGINT.
+function attachTerminalBindings(term) {
+  window.ganglionTerminalCopy.refuseMouseReporting(term);
   window.ganglionTerminalCopy.attachKeyPolicy(term);
+  window.ganglionTerminalCopy.attachCopyOnSelection(term);
+}
+
+/**
+ * Optional xterm addons. Must be called AFTER term.open() -- WebGL needs a real element.
+ *
+ * Every one is wrapped: a browser without WebGL, or an addon that failed to load, has to
+ * degrade to xterm's defaults rather than leave the tab blank. Neither is load-bearing.
+ */
+function loadTerminalAddons(term) {
+  // Unicode 11 widths. The default tables measure several box-drawing characters and most
+  // emoji one column too narrow, which shears the frame of Claude Code's TUI.
+  try {
+    term.loadAddon(new window.Unicode11Addon.Unicode11Addon());
+    term.unicode.activeVersion = '11';
+  } catch {}
+
+  // WebGL rendering, which is the difference that shows up over RDP. Losing the GL context
+  // is routine there (session reconnect, GPU driver reset), so dispose on loss and let
+  // xterm fall back to canvas rather than rendering nothing at all.
+  try {
+    const webgl = new window.WebglAddon.WebglAddon();
+    webgl.onContextLoss(() => { try { webgl.dispose(); } catch {} });
+    term.loadAddon(webgl);
+  } catch {}
 }
 
 function attachImagePasteHandler(hostEl, tabId) {
@@ -280,7 +389,8 @@ function renderTab(tabData) {
   term.loadAddon(fitAddon);
   term.open(termHost);
 
-  attachKeyPolicy(term);
+  loadTerminalAddons(term);
+  attachTerminalBindings(term);
 
   attachImagePasteHandler(termHost, tabData.id);
 
@@ -326,7 +436,8 @@ function renderTab(tabData) {
       divider.classList.remove('dragging');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
-      persistState();
+      // Purely this window's business -- the other front-end keeps its own divider.
+      persistView();
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -359,7 +470,8 @@ function spawnRightTerminal(entry) {
   termRight.loadAddon(fitAddonRight);
   termRight.open(entry.termHostRight);
 
-  attachKeyPolicy(termRight);
+  loadTerminalAddons(termRight);
+  attachTerminalBindings(termRight);
 
   attachImagePasteHandler(entry.termHostRight, rightId);
 
@@ -398,7 +510,7 @@ function setPanelMode(tabId, mode) {
   if (!entry) return;
   entry.tabData.panelMode = mode;
   applyPanelMode(tabId);
-  persistState();
+  persistView();
 }
 
 function applyPanelMode(tabId) {
@@ -440,7 +552,9 @@ async function loadMarkdownFile(tabId) {
     const text = await resp.text();
     entry.mdContent.innerHTML = marked.parse(text);
     entry.tabData.markdownFile = filePath;
-    persistState();
+    // Which file this tab is showing is part of what the tab IS, so both windows get it.
+    // Whether the pane is visible (panelMode) stays local.
+    api.tabUpdated(tabId, { markdownFile: filePath });
   } catch (err) {
     entry.mdContent.textContent = `Error: ${err.message}`;
   }
@@ -464,7 +578,9 @@ function startRenameTab(tabData, titleEl) {
     if (!cancelled) tabData.autoName = false;
     titleEl.textContent = newName;
     input.replaceWith(titleEl);
-    persistState();
+    // autoName goes with the name: without it the other window's syncCwds() would rename
+    // the tab back to the repo name on its next 5s poll.
+    api.tabUpdated(tabData.id, { name: newName, autoName: tabData.autoName });
   };
 
   input.addEventListener('blur', commit);
@@ -491,16 +607,35 @@ function setActive(id) {
       });
     }
   }
-  persistState();
+  persistView();
 }
 
+/**
+ * Close a tab from THIS window: kill the pty, tell the server, drop the local view.
+ */
 function closeTab(id) {
+  if (!tabs.has(id)) return;
+  api.ptyKill(id);
+  api.tabClosed(id);
+  teardownTab(id, { replaceIfEmpty: true });
+  persistView();
+}
+
+/**
+ * Drop a tab's DOM, terminal and local state, without deciding anything about the pty.
+ *
+ * Shared by the local close (which killed the pty already) and by a `tab:closed` broadcast
+ * from the other front-end (which must not kill it a second time).
+ *
+ * `replaceIfEmpty` is false on the remote path on purpose: both windows reaching zero tabs
+ * would otherwise each open a replacement and broadcast it, leaving two.
+ */
+function teardownTab(id, { replaceIfEmpty }) {
   const t = tabs.get(id);
   if (!t) return;
   try { t.disposeData?.(); } catch {}
   try { t.disposeExit?.(); } catch {}
   try { t.term.dispose(); } catch {}
-  api.ptyKill(id);
   destroyRightTerminal(t);
   t.tabEl.remove();
   t.pane.remove();
@@ -511,34 +646,39 @@ function closeTab(id) {
     state.activeTabId = state.tabs[0]?.id || null;
   }
   if (state.tabs.length === 0) {
-    addTab();
+    if (replaceIfEmpty) addTab();
   } else if (state.activeTabId) {
     setActive(state.activeTabId);
   }
-  persistState();
 }
 
+// Polls every 5s in EVERY connected front-end, so both windows discover the same cwd and
+// both send the same patch. The server drops the redundant one (applyTabMutation treats a
+// patch that changes nothing as no change), which is what stops the two rebroadcasting at
+// each other for as long as Ganglion is open.
 async function syncCwds() {
-  let changed = false;
   for (const t of tabs.values()) {
     try {
       const cwd = await api.ptyCwd(t.tabData.id);
-      if (cwd && cwd !== t.tabData.cwd) {
-        t.tabData.cwd = cwd;
-        changed = true;
-        if (t.tabData.autoName !== false) {
-          try {
-            const name = await api.getRepoName(t.tabData.id, cwd);
-            if (name) {
-              t.tabData.name = name;
-              t.titleEl.textContent = name;
-            }
-          } catch {}
-        }
+      if (!cwd || cwd === t.tabData.cwd) continue;
+
+      t.tabData.cwd = cwd;
+      const patch = { cwd };
+
+      if (t.tabData.autoName !== false) {
+        try {
+          const name = await api.getRepoName(t.tabData.id, cwd);
+          if (name) {
+            t.tabData.name = name;
+            t.titleEl.textContent = name;
+            patch.name = name;
+          }
+        } catch {}
       }
+
+      api.tabUpdated(t.tabData.id, patch);
     } catch {}
   }
-  if (changed) persistState();
 }
 
 init();

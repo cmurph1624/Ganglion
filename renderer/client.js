@@ -6,7 +6,7 @@
   const exitHandlers = new Map();
   const statusHandlers = [];
   const toolHandlers = [];
-  const ingestHandlers = [];
+  const tabMutationHandlers = [];
   let messageQueue = [];
 
   function connect() {
@@ -72,8 +72,13 @@
           if (resolve) { pending.delete(msg.reqId); resolve(msg.projects); }
           break;
         }
-        case 'memory:ingested': {
-          ingestHandlers.forEach((cb) => cb({ sessionId: msg.sessionId, added: msg.added }));
+        // A tab was created, renamed/moved, or closed -- possibly in the other front-end.
+        // Delivered to the originating window too; the renderer applies them all through
+        // one path, and applyTabMutation() makes re-applying its own change a no-op.
+        case 'tab:created':
+        case 'tab:updated':
+        case 'tab:closed': {
+          tabMutationHandlers.forEach((cb) => cb(msg));
           break;
         }
       }
@@ -103,8 +108,21 @@
         send({ type: 'state:load', reqId });
       });
     },
-    saveState(state) {
-      send({ type: 'state:save', state });
+    // Per-tab mutations rather than a whole-file save. The server applies each one to the
+    // shared state and rebroadcasts it, so the two front-ends converge instead of taking
+    // turns overwriting each other. View state (dividers, panel mode, which tab is active)
+    // never goes over the wire at all -- see lib/tab-state.js.
+    tabCreated(tab) {
+      send({ type: 'tab:created', tab });
+    },
+    tabUpdated(tabId, patch) {
+      send({ type: 'tab:updated', tabId, patch });
+    },
+    tabClosed(tabId) {
+      send({ type: 'tab:closed', tabId });
+    },
+    onTabMutation(cb) {
+      tabMutationHandlers.push(cb);
     },
     ptySpawn(tabId, cwd) {
       send({ type: 'pty:spawn', tabId, cwd });
@@ -181,9 +199,6 @@
         pending.set(reqId, resolve);
         send({ type: 'memory:projects', reqId });
       });
-    },
-    onMemoryIngested(cb) {
-      ingestHandlers.push(cb);
     }
   };
 })();

@@ -68,19 +68,43 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   which is why Ctrl+C could previously only ever interrupt. Whether a selection exists is passed
   *into* the policy (`classifyTerminalKey(e, {hasSelection})`) so the module stays pure; when it is
   ambiguous, SIGINT wins, because swallowing an interrupt is worse than an unwanted one.
-- **In a tab running Claude Code, you must Shift+drag to select** — Claude enables mouse
-  tracking (`?1000`/`?1002`/`?1003`/`?1006`), so xterm forwards every mouse event to the app and
-  a plain drag selects *nothing*. `shouldForceSelection()` treats Shift as the override on
-  non-Mac. The failure mode is confusing rather than obvious: the copy bindings work fine and
-  faithfully copy the empty selection, so the key appears dead. On the Mac front-end the
-  equivalent override is Option+drag, which additionally requires the `macOptionClickForcesSelection`
-  terminal option — currently unset, so Option+drag does not force a selection there yet.
+- **Ganglion declines the application's request for the mouse** — Claude Code sends
+  `CSI ? 1000/1002/1003 h`, and a terminal that grants it forwards every mouse event to the app,
+  so a plain drag selects *nothing*. That is the protocol working correctly, and `shouldForceSelection()`
+  (Shift on non-Mac, Option+`macOptionClickForcesSelection` on Mac) is the conventional escape
+  hatch — but it is the wrong trade here, where the daily act is dragging text out of a terminal
+  you are watching Claude work in. `refuseMouseReporting()` swallows the enable sequence via
+  `parser.registerCsiHandler({prefix:'?', final:'h'})`, so tracking is never turned on and a plain
+  drag always selects. Deliberately **not** the encoding modes (1005/1006/1015/1016): with tracking
+  off nothing is ever sent, whichever spelling was negotiated. Only `h` is intercepted, so a real
+  `l` still reaches xterm. A sequence mixing a mouse mode with a real one (`?1049;1002h` — alt
+  screen *plus* tracking) is passed through untouched, because a handler consumes all of a
+  sequence or none of it, and losing the alt-screen switch would corrupt the display. **Registered
+  before `pty:spawn`**, or the first prompt turns tracking on before anyone is listening.
+  The cost, accepted knowingly: clicks inside Claude's own UI no longer register, and the wheel
+  drives xterm's scrollback instead of Claude's view. This is the piece that had made the whole
+  copy path look broken — the bindings worked and faithfully copied an empty selection.
+- **Selecting is the copy** — `attachCopyOnSelection()` puts the selection on the clipboard as
+  soon as it settles, with no key press, the way Windows Terminal and PuTTY behave. It exists
+  because of the entry above: once mouse tracking has forced the user to hold Shift just to
+  select, requiring Ctrl+C on top of that is ceremony, and Ctrl+C is the one chord that is
+  ambiguous with SIGINT. It listens to xterm's `onSelectionChange` rather than a DOM `mouseup`
+  because xterm finalises a drag in a *document*-level listener, so a handler on the host element
+  would race it for the last coordinate. Debounced (`SETTLE_MS`) since the event fires on every
+  mousemove — kept well inside the 5s transient-activation window the execCommand fallback needs.
+  It deliberately does **not** clear the selection: the highlight is the only feedback that the
+  copy happened. Ctrl+C is unchanged, so it still copies-then-clears when a selection exists.
 - **Clipboard writes need the execCommand fallback** — `navigator.clipboard` requires a secure
   context, and the Mac front-end reaches Ganglion as `http://<lan-ip>:3000`, which is not one. A
   copy written against the async API alone works locally and in Electron and silently does nothing
   from the Mac. `renderer/clipboard.js` covers both; verified end to end in Electron.
 - **Ptys survive disconnect** — buffered + replayed on reconnect (`pty:replay`); killed only on explicit `pty:kill`.
-- **State saved on every change** to `~/.ganglion/state.json`.
+- **Tab state is split, not merged** — shared fields (`id`, `name`, `cwd`, `autoName`,
+  `markdownFile`) are server-owned in `~/.ganglion/state.json` and broadcast as per-tab
+  mutations; view fields (`splitPosition`, `panelMode`, `activeTabId`) are per-front-end in
+  `localStorage` and never cross the wire. The rule is `lib/tab-state.js`, loaded by both
+  sides. Do not reintroduce a whole-object save: that is what made the browser and the
+  desktop shell overwrite each other.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added
   later with no schema rewrite. Do not repurpose them.
 - **pm2 must be invoked as `node …\node_modules\pm2\bin\pm2`**, not via `pm2.cmd` — the npm shim

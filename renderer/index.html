@@ -15,7 +15,15 @@
 
   <script src="/xterm.js"></script>
   <script src="/addon-fit.js"></script>
+  <!-- WebGL renderer (faster over RDP) and Unicode 11 widths, so Claude Code's box-drawing
+       and emoji do not misalign. Both optional: renderer.js degrades to xterm's defaults if
+       either fails to load or to initialise. -->
+  <script src="/addon-webgl.js"></script>
+  <script src="/addon-unicode11.js"></script>
   <script src="/marked.js"></script>
+  <!-- Shared/view state split, served from lib/ so the server and the renderer cannot
+       disagree about which tab fields are per-client. Must load before client.js. -->
+  <script src="/tab-state.js"></script>
   <script src="/client.js"></script>
   <!-- Shared key policy: must load before both consumers (renderer.js terminals and the
        memory overlay) so neither has to re-derive which keys belong to the app. -->
