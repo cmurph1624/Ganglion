@@ -3,7 +3,7 @@
 # Redeploy Ganglion on the EC2 box: sync to a git ref, rebuild native modules,
 # restart the service, health-check the port. Invoked by CI over SSH:
 #
-#   ssh ubuntu@<tailnet-ip> "bash /home/ubuntu/Ganglion/deploy/deploy.sh '<ref>'"
+#   ssh ubuntu@<tailnet-ip> "bash /home/ubuntu/dev/Ganglion/deploy/deploy.sh '<ref>'"
 #
 # Usage: deploy.sh [git-ref]     (blank ref => latest v* tag on the box)
 #
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO="/home/ubuntu/Ganglion"
+REPO="/home/ubuntu/dev/Ganglion"
 PORT="${PORT:-3000}"
 cd "$REPO"
 

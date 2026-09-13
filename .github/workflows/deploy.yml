@@ -75,4 +75,4 @@ jobs:
           DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
         run: |
           ssh -o ConnectTimeout=20 -i ~/.ssh/id_ed25519 ubuntu@"$DEPLOY_HOST" \
-            "bash /home/ubuntu/Ganglion/deploy/deploy.sh '$DEPLOY_REF'"
+            "bash /home/ubuntu/dev/Ganglion/deploy/deploy.sh '$DEPLOY_REF'"

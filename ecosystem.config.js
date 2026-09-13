@@ -1,6 +1,6 @@
 // pm2 process definition for Ganglion.
 //
-// Start (from the runtime dir, e.g. ~/Ganglion):
+// Start (from the runtime dir, e.g. ~/dev/Ganglion):
 //   ~/.npm-global/bin/pm2 start ecosystem.config.js
 //   ~/.npm-global/bin/pm2 save
 //

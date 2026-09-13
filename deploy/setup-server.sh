@@ -3,8 +3,8 @@
 # One-time (idempotent) bootstrap for Ganglion on Ubuntu 24.04 (EC2).
 # Run it from the repo root ON THE SERVER, after cloning:
 #
-#   git clone git@github.com:cmurph1624/Ganglion.git ~/Ganglion
-#   cd ~/Ganglion
+#   git clone git@github.com:cmurph1624/Ganglion.git ~/dev/Ganglion
+#   cd ~/dev/Ganglion
 #   bash deploy/setup-server.sh
 #
 # It installs build deps, prepares ~/.ganglion (state dir + env file), builds the
