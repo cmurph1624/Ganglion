@@ -16,9 +16,9 @@ Wants=network-online.target
 Type=simple
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/home/ubuntu/Ganglion
+WorkingDirectory=/home/ubuntu/dev/Ganglion
 EnvironmentFile=/home/ubuntu/.ganglion/ganglion.env
-ExecStart=/usr/bin/node /home/ubuntu/Ganglion/server.js
+ExecStart=/usr/bin/node /home/ubuntu/dev/Ganglion/server.js
 Restart=on-failure
 RestartSec=3
 # SIGTERM triggers server.js cleanup() (kills ptys/watchers, exits 0). SQLite WAL
