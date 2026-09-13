@@ -1,0 +1,33 @@
+# Ganglion systemd unit.
+# Installed to /etc/systemd/system/ganglion.service by deploy/setup-server.sh.
+#
+# NOTE: intentionally NOT sandboxed (no ProtectSystem / PrivateTmp / NoNewPrivileges).
+# Ganglion spawns real interactive login shells and reads/writes the Claude Code
+# hook status files at /tmp/ganglion-*. PrivateTmp in particular would break those
+# hooks. Exposure is controlled at the network layer (SSH-only security group +
+# optional ufw rule), never by service sandboxing.
+[Unit]
+Description=Ganglion browser terminal multiplexer
+Documentation=https://github.com/cmurph1624/Ganglion
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Ganglion
+EnvironmentFile=/home/ubuntu/.ganglion/ganglion.env
+ExecStart=/usr/bin/node /home/ubuntu/Ganglion/server.js
+Restart=on-failure
+RestartSec=3
+# SIGTERM triggers server.js cleanup() (kills ptys/watchers, exits 0). SQLite WAL
+# auto-recovers on next open, so no explicit checkpoint step is needed on stop.
+KillSignal=SIGTERM
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ganglion
+
+[Install]
+WantedBy=multi-user.target
