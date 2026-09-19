@@ -148,8 +148,9 @@ function hardenNavigation(win) {
 //
 // So: no menu at all, plus a tiny allow-list of keys no terminal wants. Clipboard keys are
 // NOT listed -- Chromium's built-in editing shortcuts keep working without a menu, and
-// renderer.js deliberately lets Ctrl+V and Ctrl+Shift+C through to the browser. Ctrl+K is
-// not listed either; renderer/memory-panel.js owns it.
+// renderer.js lets Ctrl+V through to the browser. Ctrl+Shift+C is not a Chromium shortcut,
+// so the renderer does that copy itself (renderer/clipboard.js). Ctrl+K is not listed
+// either; renderer/memory-panel.js owns it.
 function installKeyPolicy(win) {
   win.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return;

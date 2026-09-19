@@ -10,7 +10,9 @@
   let messageQueue = [];
 
   function connect() {
-    ws = new WebSocket(`ws://${location.host}`);
+    // Follow the page's scheme: behind HTTPS (e.g. `tailscale serve`) a plain ws:// socket
+    // is mixed content and the browser refuses it outright.
+    ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
 
     ws.addEventListener('open', () => {
       for (const msg of messageQueue) ws.send(msg);
@@ -34,8 +36,11 @@
         }
         case 'pty:data':
         case 'pty:replay': {
+          // Replay is old output resent on reconnect. Handlers get told, so side effects
+          // embedded in it (an OSC 52 clipboard write) are not re-run -- see clipboard.js.
+          const meta = { replay: msg.type === 'pty:replay' };
           const cbs = dataHandlers.get(msg.tabId);
-          if (cbs) cbs.forEach((cb) => cb(msg.data));
+          if (cbs) cbs.forEach((cb) => cb(msg.data, meta));
           break;
         }
         case 'pty:exit': {

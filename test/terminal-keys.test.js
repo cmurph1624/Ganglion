@@ -119,10 +119,25 @@ test('Ctrl+Shift+V is left to the browser too', () => {
   assert.strictEqual(result.toTerminal, false);
 });
 
-test('Ctrl+Shift+C is left to the browser so copy works', () => {
+test('Ctrl+Shift+C copies the selection itself instead of leaving it to the browser', () => {
+  // This used to be passed through "so copy works" -- but no browser binds Ctrl+Shift+C to
+  // copy. Chrome opened the DevTools element picker; Electron, with no menu, did nothing.
+  // The terminal has to do the copy, and the browser default has to be stopped.
   const result = classifyTerminalKey(ev({ key: 'C', ctrlKey: true, shiftKey: true }));
   assert.strictEqual(result.toTerminal, false);
-  assert.strictEqual(result.preventDefault, false);
+  assert.strictEqual(result.preventDefault, true);
+  assert.strictEqual(result.copySelection, true);
+});
+
+test('only Ctrl+Shift+C asks for a copy', () => {
+  for (const e of [
+    ev({ key: 'c', ctrlKey: true }),                  // SIGINT
+    ev({ key: 'V', ctrlKey: true, shiftKey: true }),  // paste
+    ev({ key: 'c', metaKey: true }),                  // Mac: native copy event does it
+    ev({ key: 'C', shiftKey: true })                  // just a capital C
+  ]) {
+    assert.ok(!classifyTerminalKey(e).copySelection, JSON.stringify(e));
+  }
 });
 
 test('Ctrl+C without shift is SIGINT, not copy', () => {

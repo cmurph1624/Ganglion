@@ -60,6 +60,7 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `renderer/renderer.js` | Tab UI, xterm.js wiring, markdown rendering, divider |
 | `renderer/client.js` | WebSocket client abstraction |
 | `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
+| `renderer/clipboard.js` | Terminal → local clipboard: OSC 52 handler (how Claude Code copies on a headless box), Ctrl+Shift+C copy, click-to-copy fallback when the browser blocks a write; skips replayed output |
 | `renderer/styles.css` | Styles |
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy) |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |

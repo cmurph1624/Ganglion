@@ -112,7 +112,12 @@ function makeTerminalConfig() {
     fontSize: 13,
     cursorBlink: true,
     scrollback: 10000,
-    allowProposedApi: true
+    allowProposedApi: true,
+    // When a program owns the mouse (Claude Code's full-screen view, tmux, vim), a drag goes
+    // to the program instead of making a selection. xterm's escape hatch is Shift+drag
+    // everywhere except macOS, where it is Option+drag -- and only if this is on. It
+    // defaults to off, which left the Mac browser with no way to select text at all.
+    macOptionClickForcesSelection: true
   };
 }
 
@@ -122,8 +127,10 @@ function makeTerminalConfig() {
 // can read the same rule -- see the header there.
 function attachKeyPolicy(term) {
   term.attachCustomKeyEventHandler((e) => {
-    const { toTerminal, preventDefault } = window.ganglionTerminalKeys.classifyTerminalKey(e);
+    const { toTerminal, preventDefault, copySelection } =
+      window.ganglionTerminalKeys.classifyTerminalKey(e);
     if (preventDefault) e.preventDefault();
+    if (copySelection) window.ganglionClipboard.copyText(term.getSelection());
     return toTerminal;
   });
 }
@@ -285,6 +292,7 @@ function renderTab(tabData) {
   term.open(termHost);
 
   attachKeyPolicy(term);
+  const writeToTerm = window.ganglionClipboard.attachOsc52(term);
 
   attachImagePasteHandler(termHost, tabData.id);
 
@@ -296,7 +304,7 @@ function renderTab(tabData) {
   term.onData((data) => api.ptyWrite(tabData.id, data));
   term.onResize(({ cols, rows }) => api.ptyResize(tabData.id, cols, rows));
 
-  const disposeData = api.onPtyData(tabData.id, (data) => term.write(data));
+  const disposeData = api.onPtyData(tabData.id, writeToTerm);
   const disposeExit = api.onPtyExit(tabData.id, () => {
     term.write('\r\n\x1b[31m[process exited]\x1b[0m\r\n');
   });
@@ -364,6 +372,7 @@ function spawnRightTerminal(entry) {
   termRight.open(entry.termHostRight);
 
   attachKeyPolicy(termRight);
+  const writeToTermRight = window.ganglionClipboard.attachOsc52(termRight);
 
   attachImagePasteHandler(entry.termHostRight, rightId);
 
@@ -375,7 +384,7 @@ function spawnRightTerminal(entry) {
   termRight.onData((data) => api.ptyWrite(rightId, data));
   termRight.onResize(({ cols, rows }) => api.ptyResize(rightId, cols, rows));
 
-  entry.disposeDataRight = api.onPtyData(rightId, (data) => termRight.write(data));
+  entry.disposeDataRight = api.onPtyData(rightId, writeToTermRight);
   entry.disposeExitRight = api.onPtyExit(rightId, () => {
     termRight.write('\r\n\x1b[31m[process exited]\x1b[0m\r\n');
   });
