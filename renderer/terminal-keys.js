@@ -50,10 +50,11 @@
    * Decide what happens to a key event that landed on a terminal.
    *
    * @param {{type?: string, key?: unknown, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean}} e
-   * @returns {{toTerminal: boolean, preventDefault: boolean}}
+   * @returns {{toTerminal: boolean, preventDefault: boolean, copySelection?: boolean}}
    *   `toTerminal` is the value to return from attachCustomKeyEventHandler: true lets
    *   xterm process the key (and so reach the pty), false makes xterm ignore it and leaves
-   *   the event to whoever else is listening.
+   *   the event to whoever else is listening. `copySelection` asks the caller to copy the
+   *   terminal's selection itself, because no browser will.
    */
   function classifyTerminalKey(e) {
     // Only keydown is ours. xterm tracks modifier state on keyup, so declining one would
@@ -68,11 +69,19 @@
     // `!metaKey` matters: on a Mac, Cmd+C / Cmd+V arrive with metaKey set, and swallowing
     // those would break copy and paste in the browser front-end.
     if (e.ctrlKey && !e.metaKey) {
-      // Clipboard bindings belong to the browser. Ctrl+C without shift is left alone
-      // below, because in a terminal that is SIGINT.
+      // Paste belongs to the browser: Ctrl+V and Ctrl+Shift+V both fire a native paste
+      // event, which xterm handles. Ctrl+C without shift is left alone below, because in a
+      // terminal that is SIGINT.
       const key = typeof e.key === 'string' ? e.key : '';
-      if (key === 'v' || key === 'V' || (e.shiftKey && key === 'C')) {
+      if (key === 'v' || key === 'V') {
         return { toTerminal: false, preventDefault: false };
+      }
+      // Copy does not: Ctrl+Shift+C is a terminal convention, not a browser shortcut. Chrome
+      // opens the DevTools element picker on it and Electron (no menu) does nothing, so no
+      // copy event ever reaches xterm. The caller copies the selection itself, and the
+      // browser's default is suppressed.
+      if (e.shiftKey && key === 'C') {
+        return { toTerminal: false, preventDefault: true, copySelection: true };
       }
       // Everything else the user typed with Ctrl was meant for the shell. preventDefault
       // stops the browser acting on Ctrl+W/T/L/R as well, which is the main reason the

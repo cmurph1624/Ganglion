@@ -346,3 +346,23 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
 .mem-expand .markdown-content { padding: 2px 0; font-size: 12.5px; }
 .mem-cite { font-size: 10px; color: var(--text-dim); margin-top: 6px; word-break: break-all; }
 
+
+/* Clipboard feedback (renderer/clipboard.js). Sits above the memory overlay so a copy made
+   from inside it is still confirmed. */
+.clipboard-toast {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 10000;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 8px 12px;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+.clipboard-toast[hidden] { display: none; }
+.clipboard-toast.actionable { cursor: pointer; border-color: var(--accent); }
+.clipboard-toast.actionable:hover { background: var(--bg-tab); }
