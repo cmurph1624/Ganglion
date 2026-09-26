@@ -20,7 +20,9 @@ function persistState() {
 }
 
 async function init() {
+  const fontReady = waitForTerminalFont();
   state = (await api.loadState()) || { tabs: [], activeTabId: null };
+  await fontReady;
   if (!state.tabs) state.tabs = [];
 
   if (state.tabs.length === 0) {
@@ -65,6 +67,14 @@ async function init() {
     for (const t of tabs.values()) fitAll(t);
   });
 
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    const theme = terminalTheme();
+    for (const t of tabs.values()) {
+      t.term.options.theme = theme;
+      if (t.termRight) t.termRight.options.theme = theme;
+    }
+  });
+
   setInterval(syncCwds, 5000);
   window.addEventListener('beforeunload', () => {
     api.saveState(state);
@@ -95,20 +105,41 @@ function addTab() {
   persistState();
 }
 
+// The terminal colours live in styles.css (--term-*) so the palette is defined once;
+// xterm needs literal values, so read them off :root. Re-read on a light/dark switch
+// because --term-bg differs between the two.
+function terminalTheme() {
+  const css = getComputedStyle(document.documentElement);
+  const v = (name) => css.getPropertyValue(name).trim();
+  return {
+    background: v('--term-bg'),
+    foreground: v('--term-ink'),
+    cursor: v('--term-cursor'),
+    cursorAccent: v('--term-bg'),
+    selectionBackground: v('--term-selection')
+  };
+}
+
+// xterm measures the cell size once, when the terminal opens, so the web font has to be
+// loaded before any terminal is created or the grid is sized for the fallback face.
+// Capped so an offline machine (no Google Fonts) still starts promptly on the fallbacks.
+function waitForTerminalFont() {
+  if (!document.fonts || !document.fonts.load) return Promise.resolve();
+  const loads = Promise.all([
+    document.fonts.load('13px "JetBrains Mono"'),
+    document.fonts.load('bold 13px "JetBrains Mono"')
+  ]).catch(() => {});
+  return Promise.race([loads, new Promise((r) => setTimeout(r, 1500))]);
+}
+
 function makeTerminalConfig() {
   return {
-    theme: {
-      background: '#1e1e1e',
-      foreground: '#d4d4d4',
-      cursor: '#d4d4d4',
-      cursorAccent: '#1e1e1e',
-      selectionBackground: '#264f78'
-    },
-    // Menlo/Monaco are macOS-only, so on Windows this stack fell through to Courier New --
-    // a proportionally-designed print face that renders box-drawing and powerline glyphs
-    // badly in a terminal. Cascadia Mono (ships with Windows Terminal) and Consolas (every
-    // Windows) sit ahead of it; the macOS entries stay first so the Mac browser is unchanged.
-    fontFamily: 'Menlo, Monaco, "Cascadia Mono", Consolas, "Courier New", monospace',
+    theme: terminalTheme(),
+    // JetBrains Mono matches the dashboard. After it: Menlo/Monaco are macOS-only, so on
+    // Windows the stack fell through to Courier New -- a proportionally-designed print
+    // face that renders box-drawing and powerline glyphs badly in a terminal. Cascadia
+    // Mono (ships with Windows Terminal) and Consolas (every Windows) sit ahead of it.
+    fontFamily: '"JetBrains Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "Courier New", monospace',
     fontSize: 13,
     cursorBlink: true,
     scrollback: 10000,
