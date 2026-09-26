@@ -99,9 +99,8 @@ test('removing the last client leaves no effective size', () => {
 
 test('a client that never reported for a tab does not constrain it', () => {
   // Load-bearing, and the reason absent clients are ignored rather than counted as zero:
-  // renderer/styles.css hides inactive panes with `display: none`, so xterm's fitAddon
-  // cannot measure them and the client never reports a size for a tab it has not opened.
-  // A second window must not shrink tabs it has never looked at.
+  // a client that has not yet fit a tab (still loading, or an older renderer) has no
+  // opinion about its size. A second window must not shrink tabs it has never measured.
   const sizes = createSizeRegistry();
   sizes.set('client-a', 'tab-1', 200, 60);
   sizes.set('client-b', 'tab-2', 80, 24);

@@ -167,11 +167,17 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
 #tab-panes { flex: 1; position: relative; overflow: hidden; }
 
 .pane {
-  display: none;
+  /* Inactive panes stay laid out at full size and are only made invisible. With
+     display: none, xterm's fit addon cannot measure a hidden terminal, so it keeps a
+     stale size (80x24 if never shown) while the pty draws at the real width -- replayed
+     and background output lands mangled and the tab is garbled when switched to. */
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
   position: absolute; inset: 0;
   --left-width: 50%;
 }
-.pane.active { display: flex; }
+.pane.active { visibility: visible; pointer-events: auto; }
 
 .pane-main {
   flex: 1;
@@ -180,7 +186,7 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
   display: flex;
   flex-direction: column;
 }
-.pane.active.has-panel .pane-main {
+.pane.has-panel .pane-main {
   flex: none;
   width: var(--left-width);
 }
@@ -202,7 +208,7 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
   width: 5px;
   flex-shrink: 0;
 }
-.pane.active.has-panel .divider { display: block; }
+.pane.has-panel .divider { display: block; }
 .divider:hover, .divider.dragging { background: var(--accent); }
 
 .right-panel {
@@ -211,7 +217,7 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
   min-width: 0;
   position: relative;
 }
-.pane.active.has-panel .right-panel { display: flex; flex-direction: column; }
+.pane.has-panel .right-panel { display: flex; flex-direction: column; }
 
 .panel-toggle-strip {
   position: absolute;

@@ -531,6 +531,9 @@ function setActive(id) {
     if (active) {
       requestAnimationFrame(() => {
         fitAll(t);
+        // Hidden panes still render, but repaint on show in case a frame was missed.
+        t.term.refresh(0, t.term.rows - 1);
+        if (t.termRight) t.termRight.refresh(0, t.termRight.rows - 1);
         t.term.focus();
       });
     }
