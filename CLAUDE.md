@@ -5,51 +5,37 @@
 ## What It Is
 Ganglion is a terminal multiplexer that runs as a Node.js server on this machine. Each tab pairs a real interactive shell (via `node-pty` + `xterm.js`) with a markdown viewer. Tab colors reflect Claude Code's activity state in that terminal.
 
-Two front-ends attach to that one server and **mirror the same live ptys**: a browser (used from the Mac) and an Electron desktop shell (used locally over RDP). Both can be connected at once.
+Browsers attach to that one server and **mirror the same live ptys** — in practice the Mac, over Tailscale. Several can be connected at once.
 
-## How to Run
-```powershell
-cd C:\Users\rdpuser\Documents\Dev\Ganglion
-node server.js          # or via pm2 (see below)
+## Where It Runs
+Production is the Dell (`stigmergylabs.tailc44383.ts.net`, Ubuntu, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL` and `GANGLION_CLAUDE_BIN` are set. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
+
+```bash
+sudo systemctl status ganglion --no-pager
+sudo journalctl -u ganglion -n 50 --no-pager
+node server.js          # dev run from the repo
 npm run setup-hooks     # install Claude Code hooks (idempotent)
-npm run desktop         # optional Electron window onto the running server
+npm test
 ```
-
-The app is managed by pm2 in production:
-```powershell
-# ELEVATED shell required (the daemon runs in session 0; unelevated gives
-# `connect EPERM \\.\pipe\rpc.sock`).
-$node = "C:\Program Files\nodejs\node.exe"
-$pm2  = "C:\Users\rdpuser\AppData\Roaming\npm\node_modules\pm2\bin\pm2"
-
-whoami                                 # must be stigmergylabs\rdpuser
-& $node $pm2 list
-& $node $pm2 restart ganglion
-& $node $pm2 logs ganglion --lines 20 --nostream
-```
-
-> **Do not use `pm2.cmd`.** The npm shim falls back to a bare `node` lookup
-> (`SET "_prog=node"`), which fails in an elevated shell with the cryptic
-> `'"node"' is not recognized` — nothing to do with pm2. Invoking node directly against
-> `node_modules\pm2\bin\pm2` sidesteps both PATH and PATHEXT.
->
-> The paths are hardcoded rather than `$env:APPDATA` on purpose: if UAC ever elevates a
-> *different* admin account, `$env:APPDATA` resolves to that profile and you spawn a
-> second daemon instead of talking to the running one. Hence the `whoami` check.
-
-> ⚠️ Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command. Use a shell outside Ganglion. See `docs/verify-session-notes-deploy.md`.
 
 Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`. `GANGLION_HOST` pins the listen interface (defaults to `0.0.0.0`, which is what lets the Mac connect).
 
-## Desktop Client
-`npm run desktop` opens an Electron window onto the **already-running** server. Two rules keep it cheap and safe:
+## Deploy
+`.github/workflows/deploy.yml` runs CI on every push and PR, but **deploy is gated**: it fires only on a `v*` tag push or a manual `workflow_dispatch` — **never on a merge to `main`**. The runner joins the tailnet and SSHes in to run `deploy/deploy.sh <ref>` (checkout → `npm ci` → `npm test` → `sudo systemctl restart ganglion` → health check). With no ref it deploys the latest `v*` tag.
 
-- **It never spawns a server.** pm2 owns the lifecycle. On launch it probes the port and shows `electron/retry.html` if nothing answers, connecting automatically once the server returns. Closing the window is as harmless as closing a browser tab — ptys keep running.
-- **It never loads a native module.** Because it only opens a window, `node-pty` and `better-sqlite3` are never required from Electron — so **there is no `electron-rebuild` step**. Requiring `db/`, `memory/`, or either native module from `electron/` would break this.
+```bash
+gh workflow run deploy.yml -f ref=main    # or: git tag vX.Y.Z && git push origin vX.Y.Z
+```
 
-Launch it as `electron electron/main.js` (what the `desktop` script does), never `electron .` — that resolves `package.json:main`, which is `server.js`, and would boot Express inside Electron.
+> ⚠️ **A deploy or `systemctl restart ganglion` kills every pty** — including the one running the command and any Claude Code agents in other tabs. Never trigger it from inside a Ganglion tab (check `echo $GANGLION_TAB_ID`); use a plain SSH shell, at a moment when losing all tabs is fine. See `docs/verify-session-notes-deploy.md`.
 
-Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so terminal keys (`Ctrl+W`, `Ctrl+T`, `Ctrl+L`, `Ctrl+R`, `F5`) reach the shell instead of browser chrome — the main reason the desktop shell exists.
+## Desktop Client (legacy)
+`npm run desktop` opens an Electron window onto an **already-running** server. It was built for the old Windows-over-RDP host and is **not used on the Dell**: the Dell is headless, and the client is hardwired to `http://127.0.0.1:<PORT>` (`lib/server-probe.js`), so it only works on the same machine as the server. Pointing it at a remote host would need a URL override (not implemented). If touching it, keep its two rules:
+
+- **It never spawns a server.** The service manager owns the lifecycle. On launch it probes the port and shows `electron/retry.html` if nothing answers, connecting automatically once the server returns.
+- **It never loads a native module.** `node-pty` and `better-sqlite3` are never required from Electron — so **there is no `electron-rebuild` step**. Requiring `db/`, `memory/`, or either native module from `electron/` would break this.
+
+Launch it as `electron electron/main.js`, never `electron .` — that resolves `package.json:main`, which is `server.js`, and would boot Express inside Electron. Window bounds persist to `~/.ganglion/window.json`; the window has no menu, so terminal keys (`Ctrl+W`, `Ctrl+T`, `Ctrl+L`, `Ctrl+R`, `F5`) reach the shell instead of browser chrome.
 
 ## Architecture
 
@@ -66,7 +52,7 @@ Window bounds persist to `~/.ganglion/window.json`. The window has no menu, so t
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
 | `db/schema.sql`, `db/db.js` | SQLite memory store (`~/.ganglion/memory.db`) schema + connection |
 | `memory/ingest.js` | Incremental ingest of Claude Code transcript JSONL into `turns` |
-| `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` |
+| `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` — that path does not exist on the Dell, so the server's vault watcher no-ops there |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
 | `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
@@ -134,7 +120,8 @@ cross-session memory store. Three concerns:
 Backfill notes for existing sessions: `node scripts/backfill-notes.js` (resumable — only
 selects sessions whose `summary` is still empty). Backfill turn history + vault:
 `npm run memory:import`. Env knobs: `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`
-(default `haiku`; the live pm2 config sets `sonnet`), `GANGLION_VAULT`.
+(default `haiku`; the live `~/.ganglion/ganglion.env` sets `sonnet`, and `GANGLION_DISTILL_ENABLED=1`), `GANGLION_VAULT`
+(only read by the standalone `npm run memory:index-vault` CLI; the server's watcher uses the hardcoded path).
 
 ## Session Persistence
 Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are only killed on explicit `pty:kill`.
@@ -153,12 +140,11 @@ Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Gangl
 ## State Persistence
 Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.ganglion/state.json` on every change and restored on load.
 
-> **Known gap with two front-ends connected.** `state:save` is a blind whole-file overwrite, so the browser and the desktop shell race: last writer wins. In practice this shows up as divider/panel positions ping-ponging (cosmetic), and — across a restart — a tab created in one front-end being dropped by the other's stale copy. The tab *list* is also not live-synced: a tab opened in one window does not appear in the other until reload, and closing one leaves a stale `[process exited]` tab. The planned fix splits shared tab data from per-client view state (the latter into `localStorage`), avoiding a merge protocol entirely.
+> **Known gap with two clients connected.** `state:save` is a blind whole-file overwrite, so two connected windows race: last writer wins. In practice this shows up as divider/panel positions ping-ponging (cosmetic), and — across a restart — a tab created in one window being dropped by the other's stale copy. The tab *list* is also not live-synced: a tab opened in one window does not appear in the other until reload, and closing one leaves a stale `[process exited]` tab. The planned fix splits shared tab data from per-client view state (the latter into `localStorage`), avoiding a merge protocol entirely.
 
 ## Key Constraints
-- Shells run **unelevated**; anything needing elevation must be handed to Chris as a pasteable block
-- pm2 must be invoked as `node <prefix>\node_modules\pm2\bin\pm2` from an **elevated** shell — not via `pm2.cmd`, whose bare-`node` fallback fails there (see How to Run)
-- Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command
+- The `ubuntu` user has passwordless `sudo` (`deploy.sh` relies on it). Still confirm before any `sudo` that restarts the service or changes the host
+- Never `systemctl restart ganglion` or trigger a deploy from inside a Ganglion tab — it kills every pty, including the one running the command (see Deploy)
 - Scripts needing env vars must source `.env` explicitly
 - **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.
-- `pty:cwd` is inert on Windows (`lib/platform.js` returns no probe), so tab cwd and git-repo auto-naming do not update
+- `pty:cwd` uses `lsof -d cwd` on Linux (`lib/platform.js`). It is inert on Windows (no probe), where tab cwd and git-repo auto-naming do not update
