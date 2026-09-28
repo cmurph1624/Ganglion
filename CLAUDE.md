@@ -27,6 +27,8 @@ Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`. `GANGLI
 gh workflow run deploy.yml -f ref=main    # or: git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
+> ⚠️ **The gate only covers restarts — the working tree is live.** The service runs straight out of `/home/ubuntu/dev/Ganglion`, and `express.static` reads `renderer/` from disk on every request. So any `git pull`, `git checkout` or edit in that repo changes what browsers get on their next reload, with no deploy at all. Server-side code (`server.js`, `lib/`, `memory/`, `db/`) only changes on a restart — including a reboot, since the unit is enabled. Do risky or in-progress work on a branch in a separate worktree/clone, not in the live checkout.
+
 > ⚠️ **A deploy or `systemctl restart ganglion` kills every pty** — including the one running the command and any Claude Code agents in other tabs. Never trigger it from inside a Ganglion tab (check `echo $GANGLION_TAB_ID`); use a plain SSH shell, at a moment when losing all tabs is fine. See `docs/verify-session-notes-deploy.md`.
 
 ## Desktop Client (legacy)
