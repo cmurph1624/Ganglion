@@ -9,9 +9,10 @@ Ganglion is a terminal multiplexer + always-on cross-session memory layer.
 A single Node process (`server.js`) serves the UI, manages `node-pty` shells over WebSocket,
 watches Claude Code hook files, and owns the SQLite memory store.
 
-Two front-ends attach to that one process and **mirror the same ptys**: a browser (any machine
-that can reach the port) and an optional Electron desktop shell (`electron/`, same machine).
-The desktop shell is a window only — it never spawns a server and never loads a native module.
+It runs on the Dell (Ubuntu) as the systemd `ganglion` service (`deploy/ganglion.service`,
+config in `~/.ganglion/ganglion.env`). Browsers attach to that one process and **mirror the same
+ptys** — in practice the Mac, over Tailscale. A legacy Electron desktop shell (`electron/`) also
+exists, but it connects only to `127.0.0.1` and the Dell is headless, so it is unused there.
 
 ## Data flows
 
@@ -20,7 +21,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 
 | Flow | Trigger / entry | Server handler (`server.js`) | Module(s) | Storage |
 |---|---|---|---|---|
-| Terminal session | browser tab or desktop window → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js` | in-mem replay buffer (512KB/tab) → `~/.ganglion/state.json` |
+| Terminal session | browser tab → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js` | in-mem replay buffer (512KB/tab) → `~/.ganglion/state.json` |
 | Terminal sizing | any client → WS `pty:resize` | `handleMessage`, `applySize` | `lib/pty-sizing.js` | in-mem registry (per client, per tab) |
 | Status indicator | Claude hook writes `<tmp>/ganglion-<tab>-status` | `attachStatusWatcher` (`fs.watch`) → broadcast `tab:status` | `lib/platform.js`; `hooks/`; `renderer.js` recolor | none (transient) |
 | Memory capture | `Stop`/`SessionEnd` hook writes `<tmp>/ganglion-<tab>-ingest` | `attachIngestWatcher`, `processIngestSignal` | `memory/ingest.js` | `sessions`, `turns` (+`turns_fts`) |
@@ -35,18 +36,23 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   two halves ever disagree about the directory, Ganglion boots and terminals work while status
   dots never update and no session is ever ingested — silently. Never hardcode `/tmp`.
 - **Hooks no-op without `GANGLION_TAB_ID`** — running `claude` outside Ganglion writes nothing.
-- **Both front-ends mirror one set of ptys** — `broadcast()` fans pty output to every client. The
+- **Every client mirrors one set of ptys** — `broadcast()` fans pty output to every client. The
   pty is sized to the **minimum over attached clients** (`lib/pty-sizing.js`), tmux-style, so the
   grid fits inside every viewport. Never resize a pty straight from one client's message.
+- **Inactive panes stay laid out** — `styles.css` hides them with `visibility: hidden`, never
+  `display: none`. xterm's fit addon cannot measure a `display: none` terminal, so a background
+  tab would keep a stale size while its pty draws at the real width, and output from agents
+  running in background tabs (plus replay) lands garbled. Consequence: every client reports a
+  size for every tab, so the minimum-over-clients rule applies to all tabs, not just open ones.
 - **The desktop shell never spawns a server and never loads a native module** — it opens a window
-  onto the pm2-managed process. Requiring `node-pty`/`better-sqlite3`/`db/`/`memory/` from
+  onto the already-running server. Requiring `node-pty`/`better-sqlite3`/`db/`/`memory/` from
   `electron/` would reintroduce an Electron ABI rebuild step and let a closing window kill ptys
   the browser is still using. Launch it as `electron electron/main.js`, never `electron .` (which
   would resolve `package.json:main` and boot `server.js` inside Electron).
 - **Distiller writes session notes only** — one narrative note into `sessions.summary`, surfaced
   in recall as "Session notes". It does **not** touch Claude Code's native `memory/*.md`; native
   auto-memory solely owns durable injected facts. Off by default (`GANGLION_DISTILL_ENABLED=1`
-  to enable; set in `ecosystem.config.js` for the pm2 process).
+  to enable; set in `~/.ganglion/ganglion.env` for the systemd service, with `GANGLION_DISTILL_MODEL=sonnet`).
 - **Distiller recursion guard** — the `claude -p` subprocess runs with `GANGLION_TAB_ID` unset
   and `GANGLION_DISTILL=1`; the ingest hook no-ops under either, so distillation never re-ingests itself.
 - **One key, one owner** — `renderer/terminal-keys.js` decides whether a keydown belongs to the
@@ -58,12 +64,10 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 - **State saved on every change** to `~/.ganglion/state.json`.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added
   later with no schema rewrite. Do not repurpose them.
-- **pm2 must be invoked as `node …\node_modules\pm2\bin\pm2`**, not via `pm2.cmd` — the npm shim
-  falls back to a bare `node` lookup and dies in an elevated shell with `'"node"' is not
-  recognized`. The daemon runs in session 0, so it needs an **elevated** shell regardless
-  (unelevated gives `connect EPERM \\.\pipe\rpc.sock`). Full command in `CLAUDE.md`.
-  Never `pm2 restart ganglion` from inside a Ganglion tab — it kills the pty running the command.
-  Scripts needing env vars must source `.env`.
+- **Restarts kill every pty** — a deploy (`deploy/deploy.sh`) or `systemctl restart ganglion`
+  ends every shell, including the one running the command. Never do either from inside a Ganglion
+  tab; use a plain SSH shell. Deploy is gated (`v*` tag or `workflow_dispatch`, never a merge to
+  `main`); details in `CLAUDE.md`. Scripts needing env vars must source `.env`.
 
 ## Components by layer
 
@@ -85,7 +89,8 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy). |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` (idempotent; backs up first). |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index vault (`npm run memory:import`). |
-| `ecosystem.config.js` | pm2 process definition (sets distiller env). |
+| `deploy/ganglion.service`, `deploy/deploy.sh`, `deploy/setup-server.sh` | systemd unit, CI-invoked redeploy, one-time host bootstrap. |
+| `ecosystem.config.js` | Legacy pm2 process definition from the Windows host; unused on the Dell. |
 | `test/*.test.js` | Node test-runner suite (`npm test`). |
 | `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
