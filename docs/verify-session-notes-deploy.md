@@ -5,10 +5,9 @@ live on this box. Open this in a Ganglion markdown viewer and run the checks fro
 paired terminal.
 
 > ⚠️ **You are (probably) inside a Ganglion tab.** `echo "$GANGLION_TAB_ID"` will print a
-> UUID. That means **do NOT** `pm2 restart ganglion` / `pm2 restart ecosystem.config.js` —
-> it kills the pty running this very session. Everything below is **read-only**; the deploy
-> + restart already happened from a plain SSH shell. If a restart is ever needed, do it from
-> `ssh claudedev`, never from a tab.
+> UUID. That means **do NOT** `sudo systemctl restart ganglion` or trigger a deploy — it kills
+> every pty, including the one running this very session. Everything below is **read-only**. If
+> a restart is ever needed, do it from a plain SSH shell, never from a tab.
 
 What "done" means:
 - distiller writes ONE narrative note per session into `sessions.summary` (not native memory)
@@ -18,31 +17,34 @@ What "done" means:
 
 ---
 
-## 1. Repo state (expect branch + 2 commits)
+## 1. Repo state (the change has been merged — PR #5)
 
 ```bash
-cd ~/Documents/dev/Ganglion
-git branch --show-current            # -> repoint-distiller-session-notes
-git log --oneline main..HEAD         # -> "Document DB-backed session notes..." + "Repoint distiller..."
+cd ~/dev/Ganglion
+git log --oneline -1 -- memory/distiller.js   # distiller change is on the deployed ref
 ```
 
-## 2. Tests (expect 32 pass / 0 fail)
+## 2. Tests (expect 0 fail)
 
 ```bash
-cd ~/Documents/dev/Ganglion && node --test test/*.test.js 2>&1 | tail -6
+cd ~/dev/Ganglion && npm test 2>&1 | grep -E '^# (pass|fail)'
 ```
 
 ## 3. Live distiller config (read-only — does NOT restart anything)
 
+Reads the environment of the running service process, not the env file, so it reflects what
+is actually live:
+
 ```bash
-~/.npm-global/bin/pm2 jlist | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const p=JSON.parse(d).find(x=>x.name==="ganglion");console.log("DISTILL_ENABLED=",p.pm2_env.GANGLION_DISTILL_ENABLED,"MODEL=",p.pm2_env.GANGLION_DISTILL_MODEL)})'
-# -> DISTILL_ENABLED= 1 MODEL= sonnet
+tr '\0' '\n' < /proc/$(systemctl show -p MainPID --value ganglion)/environ | grep GANGLION_DISTILL
+# -> GANGLION_DISTILL_ENABLED=1
+#    GANGLION_DISTILL_MODEL=sonnet
 ```
 
 ## 4. DB + FTS + recall (one script, prints PASS/FAIL)
 
 ```bash
-cd ~/Documents/dev/Ganglion && node <<'EOF'
+cd ~/dev/Ganglion && node <<'EOF'
 const { openDb } = require('./db/db');
 const { search } = require('./memory/search');
 const db = openDb();
@@ -62,13 +64,10 @@ console.log(pass ? '\nALL CHECKS PASSED' : '\nSOME CHECKS FAILED');
 EOF
 ```
 
-## 5. Native memory stayed clean (expect exactly 5 files, none distiller-authored)
+## 5. Native memory stayed clean (no distiller-authored files)
 
 ```bash
-ls -1 ~/.claude/projects/-home-claudedev-Documents-dev-Ganglion/memory/*.md | xargs -n1 basename
-# -> MEMORY.md, ganglion-session-capture-hooks.md, para-vault-conventions.md,
-#    sap-help-portal-api-pagecontent.md, sap-help-portal-pdf-extraction.md
-grep -rl 'authoredBy: *ganglion' ~/.claude/projects/-home-claudedev-Documents-dev-Ganglion/memory/ 2>/dev/null
+grep -rl 'authoredBy: *ganglion' ~/.claude/projects/*/memory/ 2>/dev/null
 # -> (no output = good; no distiller-authored files)
 ```
 
@@ -79,7 +78,7 @@ a green **"session note"** badge should appear and expand to the full note.
 
 ---
 
-### Deploy snapshot (2026-07-22)
+### Original deploy snapshot (2026-07-22, previous host — kept for history)
 - Tests: 32 pass / 0 fail
 - Backfill over 137 sessions: **39 notes, 98 skipped `(no note)`, 0 failed**
-- PR: https://github.com/cmurph1624/Ganglion/pull/5 (open, base `main`)
+- PR: https://github.com/cmurph1624/Ganglion/pull/5
