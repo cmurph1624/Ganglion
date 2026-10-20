@@ -30,6 +30,19 @@ test('writeFileAtomic keeps the existing file mode', (t) => {
   assert.strictEqual(fs.statSync(file).mode & 0o777, 0o600);
 });
 
+test('writeFileAtomic keeps a mode the umask would narrow (664)', (t) => {
+  const file = path.join(tmpDir(t), 'settings.json');
+  fs.writeFileSync(file, '{}');
+  fs.chmodSync(file, 0o664);
+  const prev = process.umask(0o022);
+  try {
+    writeFileAtomic(file, '{"x":1}');
+  } finally {
+    process.umask(prev);
+  }
+  assert.strictEqual(fs.statSync(file).mode & 0o777, 0o664);
+});
+
 test('writeFileAtomic writes through a symlink instead of replacing it', (t) => {
   const dir = tmpDir(t);
   const real = path.join(dir, 'real.json');
