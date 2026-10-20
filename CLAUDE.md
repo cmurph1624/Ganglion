@@ -167,6 +167,7 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 
 ## Key Constraints
 - The `ubuntu` user has passwordless `sudo` (`deploy.sh` relies on it). Still confirm before any `sudo` that restarts the service or changes the host
+- A second Ganglion instance (worktree, scratch HOME) shares `/tmp` with the live server. Give it its own `TMPDIR` too, and never set `GANGLION_SWEEP_SIGNALS=1` for it: deleting the live tabs' signal files silently kills their status and ingest watchers
 - Do branch work in a worktree (`git worktree add ../Ganglion-<branch>`), never by switching branches in `/home/ubuntu/dev/Ganglion` — the deploy gate prompts on checkout/pull there
 - Never `systemctl restart ganglion` or trigger a deploy from inside a Ganglion tab — it kills every pty, including the one running the command (see Deploy)
 - Scripts needing env vars must source `.env` explicitly

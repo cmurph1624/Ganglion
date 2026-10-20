@@ -361,17 +361,17 @@ function sweepSignalDir({ signals }) {
   } catch {
     return;
   }
-  const doomed = [];
+  const entries = [];
+  for (const name of names) {
+    if (!name.startsWith('ganglion-')) continue;
+    try { entries.push({ name, mtimeMs: fs.statSync(path.join(dir, name)).mtimeMs }); } catch {}
+  }
+  const now = Date.now();
+  const doomed = expiredPastes(entries, now);
   if (signals) {
     const tabIds = (loadState().tabs || []).map((t) => t && t.id).filter(Boolean);
-    doomed.push(...orphanSignalFiles(names, tabIds));
+    doomed.push(...orphanSignalFiles(entries, tabIds, now));
   }
-  const pastes = [];
-  for (const name of names) {
-    if (!name.startsWith('ganglion-paste-')) continue;
-    try { pastes.push({ name, mtimeMs: fs.statSync(path.join(dir, name)).mtimeMs }); } catch {}
-  }
-  doomed.push(...expiredPastes(pastes, Date.now()));
   for (const name of doomed) {
     try { fs.unlinkSync(path.join(dir, name)); } catch {}
   }
@@ -626,7 +626,9 @@ process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
 
 drainIngestSignals();
-sweepSignalDir({ signals: true });
+// Deleting other tabs' signal files is only safe in the production instance: another
+// instance sharing /tmp would kill the live server's watchers. See lib/signal-sweep.js.
+sweepSignalDir({ signals: process.env.GANGLION_SWEEP_SIGNALS === '1' });
 // Pastes keep arriving while the server runs; tab signal files are handled by kill/exit.
 setInterval(() => sweepSignalDir({ signals: false }), 60 * 60 * 1000).unref();
 startVaultWatcher();
