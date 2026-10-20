@@ -315,9 +315,16 @@ function detachIngestWatcher(tabId) {
 // anything changed while the server was down.
 let vaultWatcher = null;
 const vaultDebounce = new Map();
-function startVaultWatcher() {
+// retrying: called again after a watcher error. Then a missing vault (moved, mid-sync,
+// unmounted) is checked again every minute until it's back; at boot a missing vault just
+// means this box has none, so nothing polls.
+function startVaultWatcher({ retrying = false } = {}) {
   const vaultRoot = resolveVault();
-  if (!db || !fs.existsSync(vaultRoot)) return;
+  if (!db) return;
+  if (!fs.existsSync(vaultRoot)) {
+    if (retrying) setTimeout(() => startVaultWatcher({ retrying: true }), 60 * 1000).unref();
+    return;
+  }
   // Catch-up sweep off the hot path.
   setImmediate(() => {
     try {
@@ -342,13 +349,13 @@ function startVaultWatcher() {
     });
     // Without a listener, a watcher 'error' (vault moved or deleted, a new folder that
     // can't be watched, inotify limit reached) is thrown and kills the server and every pty.
-    // Log it, stop watching, and try again in a minute; the boot-style sweep on restart
-    // catches up on anything missed.
+    // Log it, stop watching, and try again every minute until the vault is back; the sweep
+    // in startVaultWatcher catches up on anything missed meanwhile.
     vaultWatcher.on('error', (err) => {
       console.error('vault watcher failed, retrying in 60s:', err.message);
       try { vaultWatcher.close(); } catch {}
       vaultWatcher = null;
-      setTimeout(startVaultWatcher, 60 * 1000).unref();
+      setTimeout(() => startVaultWatcher({ retrying: true }), 60 * 1000).unref();
     });
   } catch (err) {
     console.error('vault watcher unavailable (recursive fs.watch failed):', err.message);

@@ -52,7 +52,7 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
     );
   }
-  // Convert the [[ ]] highlight markers from FTS snippet() into <mark> after escaping.
+  // Convert the \u0001/\u0002 highlight markers from FTS snippet() into <mark> after escaping.
   function renderSnippet(s) {
     // Match markers are \u0001 / \u0002 (see memory/search.js), not '[[ ]]': vault notes are
     // full of [[wikilinks]], which must stay plain text.
