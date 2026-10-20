@@ -13,6 +13,7 @@ It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the `ganglion` sy
   - 🟢 working · 🔴 waiting for you · ⚪️ idle / not running
 
   The right-hand terminal deliberately has no status colour.
+- **Phone alerts** (optional) — a push via [ntfy](https://ntfy.sh) when a tab has been red for 30s or a long Claude run finishes, so you can walk away. Set `GANGLION_NTFY_URL` and subscribe to the topic in the ntfy app
 - **Memory** — 🧠 or `Ctrl/Cmd+K`: keyword search over past Claude Code turns, per-session notes, and the Obsidian vault, with filters and click-to-expand context
 - **Clipboard** — `Ctrl+Shift+C` copies the selection; copying from Claude Code (OSC 52) reaches your local clipboard; pasting an image uploads it and types its path
 
@@ -34,6 +35,7 @@ Configuration lives in `~/.ganglion/ganglion.env` (mode 600, read by the unit). 
 | `GANGLION_CLAUDE_BIN` | `claude` binary for session notes (default `~/.local/bin/claude`) |
 | `GANGLION_VAULT` | Obsidian vault to index (default `~/TheBrainOfChris`) |
 | `GANGLION_ALLOWED_HOSTS` | Extra host names the browser may use to reach Ganglion |
+| `GANGLION_NTFY_URL`, `GANGLION_NTFY_TOKEN`, `GANGLION_ALERT_CLICK_URL`, `GANGLION_ALERT_DELAY_SEC`, `GANGLION_ALERT_DONE_MIN` | Phone alerts: ntfy topic URL (unset = off), optional token, link the alert opens, seconds a tab must stay red/idle before alerting (30), minimum run length for a "finished" alert (5; 0 = off) |
 | `GANGLION_SWEEP_SIGNALS` | Production only: clear stale tab files from `/tmp` at boot |
 
 ### Deploying

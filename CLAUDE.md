@@ -58,6 +58,7 @@ Don't run that by hand from a session: deploys go through the **deploy** skill /
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
 | `lib/request-guard.js` | Host + Origin allowlist for every HTTP request and WebSocket — stops other websites (and DNS rebinding) from driving the shells |
 | `lib/message-guard.js` | Input checks for WebSocket messages (bad JSON, missing tabId, missing state) |
+| `lib/phone-alerts.js` | Phone alerts via ntfy: when a red tab or a finished long run is worth a push, and the publish call. Off unless `GANGLION_NTFY_URL` is set |
 | `lib/distill-schedule.js` | When to write a session note: idle timer per session, soon after `SessionEnd`, skip if nothing new |
 | `lib/server-probe.js` | Port resolution (`PORT`, default 3000) |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index the vault (`npm run memory:import`) |
@@ -135,6 +136,8 @@ Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks 
 | `idle` | gray | `Stop`, `SessionStart`, `SessionEnd` |
 
 Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Ganglion).
+
+**Phone alerts** (`lib/phone-alerts.js`, off unless `GANGLION_NTFY_URL` is set in `ganglion.env`) ride on the same status changes, server-side, so they work with every browser closed. A tab going working → waiting and staying red for `GANGLION_ALERT_DELAY_SEC` (default 30) sends "Claude needs you"; a run of at least `GANGLION_ALERT_DONE_MIN` (default 5) going idle and staying idle for the delay sends "Claude finished". idle → waiting is Claude Code's after-reply reminder and is not alerted. The browser's own desktop notification (`renderer.js`) is separate and unchanged.
 
 **Only the left pane has a status colour, by design.** The right-hand terminal (`<tab>-right`) gets no status watcher and the renderer shows nothing for it. Don't add one — the user decided the tab colour follows the left pane only. Right panes *are* ingested into memory.
 
