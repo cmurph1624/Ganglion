@@ -77,8 +77,8 @@
         return { toTerminal: false, preventDefault: false };
       }
       // Copy does not: Ctrl+Shift+C is a terminal convention, not a browser shortcut. Chrome
-      // opens the DevTools element picker on it, so no copy event ever reaches xterm. The caller copies the selection itself, and the
-      // browser's default is suppressed.
+      // opens the DevTools element picker on it, so no copy event ever reaches xterm. The
+      // caller copies the selection itself, and the browser's default is suppressed.
       if (e.shiftKey && key === 'C') {
         return { toTerminal: false, preventDefault: true, copySelection: true };
       }
