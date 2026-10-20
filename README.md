@@ -18,7 +18,7 @@ It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the `ganglion` sy
 
 ## Running it
 
-The service is set up once with `bash deploy/setup-server.sh` (idempotent: build deps, `~/.ganglion/ganglion.env`, the systemd unit, the hooks).
+The service is set up once with `bash deploy/setup-server.sh` (idempotent: build deps, `~/.ganglion/ganglion.env`, `npm ci`, the systemd unit), then `npm run setup-hooks` to install the Claude Code hooks — without them there are no status dots and no memory capture.
 
 ```bash
 sudo systemctl status ganglion --no-pager
