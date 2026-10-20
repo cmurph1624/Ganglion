@@ -4,7 +4,7 @@
 # NOTE: intentionally NOT sandboxed (no ProtectSystem / PrivateTmp / NoNewPrivileges).
 # Ganglion spawns real interactive login shells and reads/writes the Claude Code
 # hook status files at /tmp/ganglion-*. PrivateTmp in particular would break those
-# hooks. Exposure is controlled at the network layer (SSH-only security group +
+# hooks. Exposure is controlled at the network layer (tailnet only +
 # optional ufw rule), never by service sandboxing.
 [Unit]
 Description=Ganglion browser terminal multiplexer

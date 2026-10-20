@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-time (idempotent) bootstrap for Ganglion on Ubuntu 24.04 (EC2).
+# One-time (idempotent) bootstrap for Ganglion on Ubuntu 24.04 (stigmergylabs).
 # Run it from the repo root ON THE SERVER, after cloning:
 #
 #   git clone git@github.com:cmurph1624/Ganglion.git ~/dev/Ganglion
