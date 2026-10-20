@@ -2,6 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { writeFileAtomic } = require('./lib/atomic-write');
 
 const hooksFile = path.join(__dirname, 'hooks', 'ganglion-hooks.json');
 const settingsDir = path.join(os.homedir(), '.claude');
@@ -57,6 +58,7 @@ for (const [event, entries] of Object.entries(ganglionHooks)) {
   existing.hooks[event].push(...entries);
 }
 
-fs.writeFileSync(settingsFile, JSON.stringify(existing, null, 2));
+// Atomic: every Claude Code session reads this file, so it must never be seen half-written.
+writeFileAtomic(settingsFile, JSON.stringify(existing, null, 2));
 console.log(`Installed Ganglion hooks into ${settingsFile}`);
 console.log('Hook events configured: SessionStart, UserPromptSubmit, PreToolUse, PostToolUse, Notification, Stop, SessionEnd');
