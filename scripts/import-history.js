@@ -11,7 +11,7 @@ const os = require('os');
 const path = require('path');
 const { getDb } = require('../db/db');
 const { ingestTranscript } = require('../memory/ingest');
-const { indexVault, DEFAULT_VAULT } = require('../memory/index-vault');
+const { indexVault, resolveVault } = require('../memory/index-vault');
 
 const PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 
@@ -59,14 +59,16 @@ function main() {
   }
   process.stdout.write(`\nIngested ${totalAdded} new turns across ${sessionsTouched} sessions.\n`);
 
-  if (fs.existsSync(DEFAULT_VAULT)) {
-    process.stdout.write(`Indexing vault at ${DEFAULT_VAULT}\n`);
+  const vaultRoot = resolveVault();
+  if (fs.existsSync(vaultRoot)) {
+    process.stdout.write(`Indexing vault at ${vaultRoot}\n`);
     const v = indexVault(db, {
+      vaultRoot,
       onProgress: (n, total) => process.stdout.write(`\r  ${n}/${total} notes`)
     });
     process.stdout.write(`\nVault: ${v.indexed} indexed, ${v.skipped} unchanged, ${v.scanned} scanned.\n`);
   } else {
-    process.stdout.write(`Vault not found at ${DEFAULT_VAULT} — skipping note index.\n`);
+    process.stdout.write(`Vault not found at ${vaultRoot} — skipping note index.\n`);
   }
 
   const sessions = db.prepare('SELECT count(*) c FROM sessions').get().c;

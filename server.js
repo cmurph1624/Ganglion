@@ -8,7 +8,7 @@ const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { getDb } = require('./db/db');
 const { ingestTranscript } = require('./memory/ingest');
-const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault');
+const { indexVault, indexFile, resolveVault } = require('./memory/index-vault');
 const memorySearch = require('./memory/search');
 const distiller = require('./memory/distiller');
 const {
@@ -315,23 +315,47 @@ function detachIngestWatcher(tabId) {
 // anything changed while the server was down.
 let vaultWatcher = null;
 const vaultDebounce = new Map();
-function startVaultWatcher() {
-  if (!db || !fs.existsSync(DEFAULT_VAULT)) return;
+// retrying: called again after a watcher error. Then a missing vault (moved, mid-sync,
+// unmounted) is checked again every minute until it's back; at boot a missing vault just
+// means this box has none, so nothing polls.
+function startVaultWatcher({ retrying = false } = {}) {
+  const vaultRoot = resolveVault();
+  if (!db) return;
+  if (!fs.existsSync(vaultRoot)) {
+    if (retrying) setTimeout(() => startVaultWatcher({ retrying: true }), 60 * 1000).unref();
+    return;
+  }
   // Catch-up sweep off the hot path.
   setImmediate(() => {
-    try { indexVault(db); } catch (err) { console.error('vault sweep failed:', err.message); }
+    try {
+      const r = indexVault(db, { vaultRoot });
+      console.log(`vault ${vaultRoot}: ${r.scanned} notes, ${r.indexed} (re)indexed`);
+    } catch (err) {
+      console.error('vault sweep failed:', err.message);
+    }
   });
   try {
-    vaultWatcher = fs.watch(DEFAULT_VAULT, { persistent: false, recursive: true }, (_evt, rel) => {
+    vaultWatcher = fs.watch(vaultRoot, { persistent: false, recursive: true }, (_evt, rel) => {
       if (!rel || !rel.endsWith('.md')) return;
-      const abs = path.join(DEFAULT_VAULT, rel);
+      const abs = path.join(vaultRoot, rel);
       clearTimeout(vaultDebounce.get(abs));
       vaultDebounce.set(
         abs,
         setTimeout(() => {
-          try { indexFile(db, abs); } catch (err) { console.error('vault index failed:', err.message); }
+          vaultDebounce.delete(abs);
+          try { indexFile(db, abs, vaultRoot); } catch (err) { console.error('vault index failed:', err.message); }
         }, 1000)
       );
+    });
+    // Without a listener, a watcher 'error' (vault moved or deleted, a new folder that
+    // can't be watched, inotify limit reached) is thrown and kills the server and every pty.
+    // Log it, stop watching, and try again every minute until the vault is back; the sweep
+    // in startVaultWatcher catches up on anything missed meanwhile.
+    vaultWatcher.on('error', (err) => {
+      console.error('vault watcher failed, retrying in 60s:', err.message);
+      try { vaultWatcher.close(); } catch {}
+      vaultWatcher = null;
+      setTimeout(() => startVaultWatcher({ retrying: true }), 60 * 1000).unref();
     });
   } catch (err) {
     console.error('vault watcher unavailable (recursive fs.watch failed):', err.message);
