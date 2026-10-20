@@ -54,7 +54,9 @@
   }
   // Convert the [[ ]] highlight markers from FTS snippet() into <mark> after escaping.
   function renderSnippet(s) {
-    return escapeHtml(s).replace(/\[\[/g, '<mark>').replace(/\]\]/g, '</mark>');
+    // Match markers are \u0001 / \u0002 (see memory/search.js), not '[[ ]]': vault notes are
+    // full of [[wikilinks]], which must stay plain text.
+    return escapeHtml(s).replace(/\u0001/g, '<mark>').replace(/\u0002/g, '</mark>');
   }
   function relTime(iso) {
     if (!iso) return '';

@@ -335,9 +335,20 @@ function startVaultWatcher() {
       vaultDebounce.set(
         abs,
         setTimeout(() => {
+          vaultDebounce.delete(abs);
           try { indexFile(db, abs, vaultRoot); } catch (err) { console.error('vault index failed:', err.message); }
         }, 1000)
       );
+    });
+    // Without a listener, a watcher 'error' (vault moved or deleted, a new folder that
+    // can't be watched, inotify limit reached) is thrown and kills the server and every pty.
+    // Log it, stop watching, and try again in a minute; the boot-style sweep on restart
+    // catches up on anything missed.
+    vaultWatcher.on('error', (err) => {
+      console.error('vault watcher failed, retrying in 60s:', err.message);
+      try { vaultWatcher.close(); } catch {}
+      vaultWatcher = null;
+      setTimeout(startVaultWatcher, 60 * 1000).unref();
     });
   } catch (err) {
     console.error('vault watcher unavailable (recursive fs.watch failed):', err.message);

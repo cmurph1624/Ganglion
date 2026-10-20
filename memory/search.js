@@ -1,5 +1,9 @@
 'use strict';
 
+// FTS snippets mark matches with \u0001 … \u0002 (SQL char(1)/char(2)): characters that can't
+// occur in note text, unlike '[[' ']]', which Obsidian uses for every wikilink. The Ctrl+K
+// overlay (renderer/memory-panel.js) turns them into <mark>.
+
 // Recall over the memory store. Structured as two stages so a vector retriever +
 // reranker can be added later without changing the callers:
 //   retrieve(db, opts) -> candidate rows (today: FTS5 keyword over turns + notes)
@@ -22,7 +26,7 @@ function retrieveSessions(db, fts, opts, limit) {
            s.transcript_path AS path, t.ts AS ts, t.role AS role,
            t.tool_names AS tools, t.byte_offset AS byteOffset,
            bm25(turns_fts) AS score,
-           snippet(turns_fts, 0, '[[', ']]', '…', 12) AS snippet
+           snippet(turns_fts, 0, char(1), char(2), '…', 12) AS snippet
     FROM turns_fts
     JOIN turns t ON t.id = turns_fts.rowid
     JOIN sessions s ON s.session_id = t.session_id
@@ -54,7 +58,7 @@ function retrieveNotes(db, fts, opts, limit) {
   let sql = `
     SELECT d.id AS id, d.title AS title, d.folder AS folder, d.path AS path,
            d.mtime AS mtime, bm25(documents_fts) AS score,
-           snippet(documents_fts, 1, '[[', ']]', '…', 12) AS snippet
+           snippet(documents_fts, 1, char(1), char(2), '…', 12) AS snippet
     FROM documents_fts
     JOIN documents d ON d.id = documents_fts.rowid
     WHERE documents_fts MATCH @fts`;
@@ -83,7 +87,7 @@ function retrieveSummaries(db, fts, opts, limit) {
     SELECT s.session_id AS sessionId, s.project_slug AS project,
            s.transcript_path AS path, s.ended_at AS ts, s.status AS status,
            bm25(sessions_fts) AS score,
-           snippet(sessions_fts, 0, '[[', ']]', '…', 12) AS snippet
+           snippet(sessions_fts, 0, char(1), char(2), '…', 12) AS snippet
     FROM sessions_fts
     JOIN sessions s ON s.rowid = sessions_fts.rowid
     WHERE sessions_fts MATCH @fts`;

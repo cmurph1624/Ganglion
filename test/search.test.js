@@ -36,7 +36,7 @@ test('search spans sessions and notes, cited by source', () => {
   assert.strictEqual(note.project, '10 Projects/DITD');
   const sess = results.find((r) => r.source === 'session');
   assert.ok(sess.sessionId);
-  assert.ok(sess.snippet.includes('[[')); // highlighted
+  assert.ok(sess.snippet.includes('\u0001')); // highlighted
   db.close();
 });
 
@@ -55,7 +55,7 @@ test('search surfaces distilled session notes as source "summary"', () => {
   assert.ok(summary, 'has a session-note hit');
   assert.strictEqual(summary.sessionId, 's1');
   assert.strictEqual(summary.project, 'proj-ditd');
-  assert.ok(summary.snippet.includes('[[')); // highlighted
+  assert.ok(summary.snippet.includes('\u0001')); // highlighted
   db.close();
 });
 
