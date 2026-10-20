@@ -8,7 +8,7 @@ Ganglion is a terminal multiplexer that runs as a Node.js server on this machine
 Browsers attach to that one server and **mirror the same live ptys** — in practice the Mac, over Tailscale (any tailnet device can connect). Several can be connected at once.
 
 ## Where It Runs
-Production is a GMKtec M6 Ultra mini PC — hostname `stigmergylabs` (`stigmergylabs.tailc44383.ts.net`, Ubuntu 24.04, 12 cores / 25 GB, headless, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL` and `GANGLION_CLAUDE_BIN` are set. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
+Production is a GMKtec M6 Ultra mini PC — hostname `stigmergylabs` (`stigmergylabs.tailc44383.ts.net`, Ubuntu 24.04, 12 cores / 25 GB, headless, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`, `GANGLION_CLAUDE_BIN` and `GANGLION_SWEEP_SIGNALS=1` (boot sweep of stale tab signal files; production only) are set. `setup-server.sh` only creates this file when it is missing, so a new knob in `.env.example` must be added to the live file by hand. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
 
 Earlier hosts are retired: the Dell (tailnet node `stigmergylabs-dell`, offline), before that EC2, and before that a Windows box over RDP. Comments mentioning EC2, security groups, pm2 or Windows paths are leftovers from those.
 
@@ -167,6 +167,7 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 
 ## Key Constraints
 - The `ubuntu` user has passwordless `sudo` (`deploy.sh` relies on it). Still confirm before any `sudo` that restarts the service or changes the host
+- A second Ganglion instance (worktree, scratch HOME) shares `/tmp` with the live server. Give it its own `TMPDIR` too, and never set `GANGLION_SWEEP_SIGNALS=1` for it: deleting the live tabs' signal files silently kills their status and ingest watchers
 - Do branch work in a worktree (`git worktree add ../Ganglion-<branch>`), never by switching branches in `/home/ubuntu/dev/Ganglion` — the deploy gate prompts on checkout/pull there
 - Never `systemctl restart ganglion` or trigger a deploy from inside a Ganglion tab — it kills every pty, including the one running the command (see Deploy)
 - Scripts needing env vars must source `.env` explicitly

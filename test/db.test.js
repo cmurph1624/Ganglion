@@ -127,12 +127,14 @@ test('documents_fts indexes vault notes for search', () => {
   db.close();
 });
 
-test('openDb adds distilled_turns to a sessions table created before the column existed', () => {
+test('openDb adds distilled_turns to a sessions table created before the column existed', (t) => {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
   const Database = require('better-sqlite3');
-  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-db-')), 'old.db');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-db-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'old.db');
   const old = new Database(file);
   old.exec(`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_slug TEXT NOT NULL,
     project_path TEXT, transcript_path TEXT NOT NULL, git_branch TEXT, started_at TEXT, ended_at TEXT,

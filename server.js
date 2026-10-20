@@ -26,6 +26,7 @@ const { writeFileAtomic, readJsonOrQuarantine } = require('./lib/atomic-write');
 const { END_DELAY_MS, idleDelayMs, scheduleOnIngest, shouldRunNow } = require('./lib/distill-schedule');
 const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
 const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
+const { orphanSignalFiles, expiredPastes } = require('./lib/signal-sweep');
 
 // Distillation makes an LLM call to write a narrative session note into sessions.summary
 // (searchable in the Memory overlay). It does NOT touch Claude Code's native memory files.
@@ -129,6 +130,9 @@ function toolFileFor(tabId) {
 const toolWatchers = new Map();
 
 function attachStatusWatcher(tabId) {
+  // A respawned pty (same tab id) must not leave the previous watchers running: they
+  // would broadcast every status change twice.
+  closeStatusWatchers(tabId);
   const file = statusFileFor(tabId);
   try {
     fs.writeFileSync(file, 'idle');
@@ -157,6 +161,23 @@ function attachStatusWatcher(tabId) {
     const tw = fs.watch(toolFile, { persistent: false }, () => readTool());
     toolWatchers.set(tabId, tw);
   } catch {}
+}
+
+function closeStatusWatchers(tabId) {
+  for (const map of [statusWatchers, toolWatchers]) {
+    const w = map.get(tabId);
+    if (w) {
+      try { w.close(); } catch {}
+      map.delete(tabId);
+    }
+  }
+}
+
+// Pane closed or its shell exited: stop watching and remove the status/tool files.
+function detachStatusWatchers(tabId) {
+  closeStatusWatchers(tabId);
+  try { fs.unlinkSync(statusFileFor(tabId)); } catch {}
+  try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
 }
 
 function ingestFileFor(tabId) {
@@ -247,7 +268,10 @@ function attachIngestWatcher(tabId) {
   const file = ingestFileFor(tabId);
   const fire = () => {
     clearTimeout(ingestDebounce.get(tabId));
-    ingestDebounce.set(tabId, setTimeout(() => processIngestSignal(file), 500));
+    ingestDebounce.set(tabId, setTimeout(() => {
+      ingestDebounce.delete(tabId);
+      processIngestSignal(file);
+    }, 500));
   };
   // Drain anything already written (e.g. a Stop that fired before this watcher existed).
   if (fs.existsSync(file)) fire();
@@ -277,7 +301,11 @@ function detachIngestWatcher(tabId) {
   }
   clearTimeout(ingestDebounce.get(tabId));
   ingestDebounce.delete(tabId);
-  try { fs.unlinkSync(ingestFileFor(tabId)); } catch {}
+  // The last Stop/SessionEnd may still be inside the 500ms debounce; ingest it before the
+  // file goes. Ingest is incremental, so re-reading an already-processed signal is a no-op.
+  const file = ingestFileFor(tabId);
+  if (fs.existsSync(file)) processIngestSignal(file);
+  try { fs.unlinkSync(file); } catch {}
 }
 
 // Watch the Obsidian vault so edits show up in recall promptly. Node's recursive
@@ -321,6 +349,33 @@ function drainIngestSignals() {
   for (const f of files) processIngestSignal(path.join(dir, f));
 }
 
+// Remove signal files of tabs that no longer exist, and pasted images older than a day.
+// See lib/signal-sweep.js for why this keys on this instance's own tab list.
+function sweepSignalDir({ signals }) {
+  const dir = signalDir();
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  const entries = [];
+  for (const name of names) {
+    if (!name.startsWith('ganglion-')) continue;
+    try { entries.push({ name, mtimeMs: fs.statSync(path.join(dir, name)).mtimeMs }); } catch {}
+  }
+  const now = Date.now();
+  const doomed = expiredPastes(entries, now);
+  if (signals) {
+    const tabIds = (loadState().tabs || []).map((t) => t && t.id).filter(Boolean);
+    doomed.push(...orphanSignalFiles(entries, tabIds, now));
+  }
+  for (const name of doomed) {
+    try { fs.unlinkSync(path.join(dir, name)); } catch {}
+  }
+  if (doomed.length) console.log(`removed ${doomed.length} stale file(s) from ${dir}`);
+}
+
 // Resize a pty to the size that fits inside every client currently watching it. A no-op
 // when the pty is gone or no client has reported a size yet.
 function applySize(tabId) {
@@ -362,6 +417,12 @@ function spawnPty(ws, tabId, cwd) {
     broadcast({ type: 'pty:data', tabId, data });
   });
   p.onExit(() => {
+    // Only clean up if this is still the tab's pty. After pty:kill the entry is already
+    // gone; if a new pty took the id, its state and watchers are not ours to remove.
+    const current = ptyProcesses.get(tabId);
+    if (current && current !== p) return;
+    if (!tabId.endsWith('-right')) detachStatusWatchers(tabId);
+    detachIngestWatcher(tabId);
     ptyProcesses.delete(tabId);
     ptyBuffers.delete(tabId);
     // Otherwise a tab id reused by a later spawn inherits the dimensions clients measured
@@ -436,20 +497,7 @@ function dispatchMessage(ws, msg) {
       }
       ptyBuffers.delete(tabId);
       sizes.removeTab(tabId);
-      if (!tabId.endsWith('-right')) {
-        const w = statusWatchers.get(tabId);
-        if (w) {
-          try { w.close(); } catch {}
-          statusWatchers.delete(tabId);
-        }
-        try { fs.unlinkSync(statusFileFor(tabId)); } catch {}
-        const tw = toolWatchers.get(tabId);
-        if (tw) {
-          try { tw.close(); } catch {}
-          toolWatchers.delete(tabId);
-        }
-        try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
-      }
+      if (!tabId.endsWith('-right')) detachStatusWatchers(tabId);
       detachIngestWatcher(tabId);
       break;
     }
@@ -576,6 +624,11 @@ process.on('SIGINT', cleanup);
 process.on('SIGTERM', cleanup);
 
 drainIngestSignals();
+// Deleting other tabs' signal files is only safe in the production instance: another
+// instance sharing /tmp would kill the live server's watchers. See lib/signal-sweep.js.
+sweepSignalDir({ signals: process.env.GANGLION_SWEEP_SIGNALS === '1' });
+// Pastes keep arriving while the server runs; tab signal files are handled by kill/exit.
+setInterval(() => sweepSignalDir({ signals: false }), 60 * 60 * 1000).unref();
 startVaultWatcher();
 
 server.listen(PORT, HOST, () => {
