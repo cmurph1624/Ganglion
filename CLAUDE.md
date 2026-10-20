@@ -66,6 +66,7 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
 | `lib/request-guard.js` | Host + Origin allowlist for every HTTP request and WebSocket — stops other websites (and DNS rebinding) from driving the shells |
 | `lib/message-guard.js` | Input checks for WebSocket messages (bad JSON, missing tabId, missing state) |
+| `lib/distill-schedule.js` | When to write a session note: idle timer per session, soon after `SessionEnd`, skip if nothing new |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
 | `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |
@@ -115,7 +116,7 @@ cross-session memory store. Three concerns:
   in a global browser overlay (🧠 Memory / Ctrl+K) with cited results and click-to-expand
   context. Schema reserves `embedding` columns so semantic search can be added later without
   a rewrite.
-- **Distillation → session notes** — after Claude stops (currently every `Stop` that ingests new turns, debounced 3s per session — so in practice once per turn, not once per session), a distiller runs headless `claude -p`
+- **Distillation → session notes** — once a session goes quiet (no new turns for `GANGLION_DISTILL_IDLE_MIN`, default 10 minutes) or soon after `SessionEnd` — and only if there are turns the last note didn't cover (`lib/distill-schedule.js`) — a distiller runs headless `claude -p`
   and writes ONE narrative note (≈120–250 words) into the `sessions.summary` column of
   `~/.ganglion/memory.db`, auto-indexed into `sessions_fts` (via the `sessions_au` trigger)
   and surfaced as the **"Session notes"** recall source. It **does not** touch Claude Code's
@@ -128,7 +129,7 @@ cross-session memory store. Three concerns:
 
 Backfill notes for existing sessions: `node scripts/backfill-notes.js` (resumable — only
 selects sessions whose `summary` is still empty). Backfill turn history + vault:
-`npm run memory:import`. Env knobs: `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`
+`npm run memory:import`. Env knobs: `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_IDLE_MIN`, `GANGLION_DISTILL_MODEL`
 (default `haiku`; the live `~/.ganglion/ganglion.env` sets `sonnet`, and `GANGLION_DISTILL_ENABLED=1`), `GANGLION_VAULT`
 (only read by the standalone `npm run memory:index-vault` CLI; the server's watcher uses the hardcoded path).
 

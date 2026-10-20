@@ -22,15 +22,20 @@ const {
 } = require('./lib/platform');
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
+const { END_DELAY_MS, idleDelayMs, scheduleOnIngest, shouldRunNow } = require('./lib/distill-schedule');
 const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
 const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
 
-// Distillation makes an LLM call per session to write a narrative session note into
-// sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
-// native memory files. Still opt-in (an LLM call per session): GANGLION_DISTILL_ENABLED=1.
+// Distillation makes an LLM call to write a narrative session note into sessions.summary
+// (searchable in the Memory overlay). It does NOT touch Claude Code's native memory files.
+// Opt-in: GANGLION_DISTILL_ENABLED=1. When it runs is decided by lib/distill-schedule.js:
+// once a session has been quiet for GANGLION_DISTILL_IDLE_MIN (default 10), or soon after
+// SessionEnd — not after every reply.
 const DISTILL_ENABLED = process.env.GANGLION_DISTILL_ENABLED === '1';
-const distillDebounce = new Map();
+const DISTILL_IDLE_MS = idleDelayMs();
+const distillTimers = new Map();      // sessionId -> pending timeout
 const distillRunning = new Set();
+const distilledTurns = new Map();     // sessionId -> turn_count covered by this process's last run
 
 // Shared with the desktop client (lib/server-probe.js) so the two cannot disagree about
 // where Ganglion listens.
@@ -175,37 +180,54 @@ function processIngestSignal(file) {
   if (!transcriptPath) return;
   try {
     const { sessionId, added } = ingestTranscript(db, transcriptPath);
-    if (added > 0) {
-      broadcast({ type: 'memory:ingested', sessionId, added });
-      maybeDistill(sessionId);
-    }
+    if (added > 0) broadcast({ type: 'memory:ingested', sessionId, added });
+    maybeDistill(sessionId, payload.event, added);
   } catch (err) {
     console.error('ingest failed:', err.message);
   }
 }
 
-// Fire-and-forget distillation, debounced per session so a burst of Stops collapses
-// into one run, and guarded against overlapping runs for the same session.
-function maybeDistill(sessionId) {
+function sessionTurnInfo(sessionId) {
+  const row = db.prepare('SELECT turn_count, summary FROM sessions WHERE session_id = ?').get(sessionId);
+  return { turnCount: row ? row.turn_count || 0 : 0, hasSummary: !!(row && row.summary) };
+}
+
+// Called for every ingest signal. Restarts the session's idle timer on new turns, or runs
+// soon after SessionEnd; see lib/distill-schedule.js.
+function maybeDistill(sessionId, event, added) {
   if (!DISTILL_ENABLED || !db || !sessionId) return;
-  clearTimeout(distillDebounce.get(sessionId));
-  distillDebounce.set(
+  const when = scheduleOnIngest({
+    event,
+    added,
+    ...sessionTurnInfo(sessionId),
+    distilledTurns: distilledTurns.get(sessionId),
+  });
+  if (!when) return;
+  clearTimeout(distillTimers.get(sessionId));
+  distillTimers.set(
     sessionId,
-    setTimeout(() => {
-      if (distillRunning.has(sessionId)) return;
-      distillRunning.add(sessionId);
-      distiller
-        .distillSession(db, sessionId)
-        .then((r) => {
-          if (r.updated) {
-            console.log(`wrote session note (${r.chars} chars) for session ${sessionId}`);
-            broadcast({ type: 'memory:distilled', sessionId });
-          }
-        })
-        .catch((err) => console.error('distill failed:', err.message))
-        .finally(() => distillRunning.delete(sessionId));
-    }, 3000)
+    setTimeout(() => runDistill(sessionId), when === 'end' ? END_DELAY_MS : DISTILL_IDLE_MS)
   );
+}
+
+function runDistill(sessionId) {
+  distillTimers.delete(sessionId);
+  if (distillRunning.has(sessionId)) return;
+  const { turnCount } = sessionTurnInfo(sessionId);
+  if (!shouldRunNow({ turnCount, distilledTurns: distilledTurns.get(sessionId) })) return;
+  distillRunning.add(sessionId);
+  distiller
+    .distillSession(db, sessionId)
+    .then((r) => {
+      // Covered either way: a "(no note)" answer must not be retried on every idle.
+      distilledTurns.set(sessionId, turnCount);
+      if (r.updated) {
+        console.log(`wrote session note (${r.chars} chars) for session ${sessionId}`);
+        broadcast({ type: 'memory:distilled', sessionId });
+      }
+    })
+    .catch((err) => console.error('distill failed:', err.message))
+    .finally(() => distillRunning.delete(sessionId));
 }
 
 function attachIngestWatcher(tabId) {
