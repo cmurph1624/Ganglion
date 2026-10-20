@@ -126,3 +126,25 @@ test('documents_fts indexes vault notes for search', () => {
   assert.strictEqual(hits[0].title, 'Pickleball Drills');
   db.close();
 });
+
+test('openDb adds distilled_turns to a sessions table created before the column existed', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const Database = require('better-sqlite3');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-db-')), 'old.db');
+  const old = new Database(file);
+  old.exec(`CREATE TABLE sessions (session_id TEXT PRIMARY KEY, project_slug TEXT NOT NULL,
+    project_path TEXT, transcript_path TEXT NOT NULL, git_branch TEXT, started_at TEXT, ended_at TEXT,
+    turn_count INTEGER DEFAULT 0, ingested_bytes INTEGER DEFAULT 0, summary TEXT, status TEXT,
+    created_at TEXT DEFAULT (datetime('now')), updated_at TEXT)`);
+  old.prepare("INSERT INTO sessions(session_id, project_slug, transcript_path, summary) VALUES('s', 'p', '/t', 'note')").run();
+  old.close();
+  const { openDb: open } = require('../db/db');
+  const db = open(file);
+  const cols = db.prepare('PRAGMA table_info(sessions)').all().map((c) => c.name);
+  assert.ok(cols.includes('distilled_turns'));
+  assert.strictEqual(db.prepare("SELECT summary FROM sessions WHERE session_id='s'").get().summary, 'note');
+  db.close();
+  open(file).close(); // idempotent: a second open must not try to add it again
+});

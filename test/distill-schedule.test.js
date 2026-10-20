@@ -59,3 +59,11 @@ test('shouldRunNow skips a session this process already covered', () => {
   assert.strictEqual(shouldRunNow({ turnCount: 12, distilledTurns: 10 }), true);
   assert.strictEqual(shouldRunNow({ turnCount: 0 }), false);
 });
+
+test('a "(no note)" session recorded in distilled_turns is not re-run by a stale SessionEnd', () => {
+  // No summary, but the last run covered all 3 turns (the model answered "(no note)").
+  assert.strictEqual(
+    scheduleOnIngest({ event: 'SessionEnd', added: 0, turnCount: 3, hasSummary: false, distilledTurns: 3 }),
+    null
+  );
+});

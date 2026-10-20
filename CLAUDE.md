@@ -116,7 +116,7 @@ cross-session memory store. Three concerns:
   in a global browser overlay (🧠 Memory / Ctrl+K) with cited results and click-to-expand
   context. Schema reserves `embedding` columns so semantic search can be added later without
   a rewrite.
-- **Distillation → session notes** — once a session goes quiet (no new turns for `GANGLION_DISTILL_IDLE_MIN`, default 10 minutes) or soon after `SessionEnd` — and only if there are turns the last note didn't cover (`lib/distill-schedule.js`) — a distiller runs headless `claude -p`
+- **Distillation → session notes** — once a session goes quiet (no new turns for `GANGLION_DISTILL_IDLE_MIN`, default 10 minutes) or soon after `SessionEnd` — and only if there are turns the last run didn't cover (`sessions.distilled_turns`; `lib/distill-schedule.js`) — a distiller runs headless `claude -p`
   and writes ONE narrative note (≈120–250 words) into the `sessions.summary` column of
   `~/.ganglion/memory.db`, auto-indexed into `sessions_fts` (via the `sessions_au` trigger)
   and surfaced as the **"Session notes"** recall source. It **does not** touch Claude Code's

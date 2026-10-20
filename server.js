@@ -35,7 +35,6 @@ const DISTILL_ENABLED = process.env.GANGLION_DISTILL_ENABLED === '1';
 const DISTILL_IDLE_MS = idleDelayMs();
 const distillTimers = new Map();      // sessionId -> pending timeout
 const distillRunning = new Set();
-const distilledTurns = new Map();     // sessionId -> turn_count covered by this process's last run
 
 // Shared with the desktop client (lib/server-probe.js) so the two cannot disagree about
 // where Ganglion listens.
@@ -188,20 +187,21 @@ function processIngestSignal(file) {
 }
 
 function sessionTurnInfo(sessionId) {
-  const row = db.prepare('SELECT turn_count, summary FROM sessions WHERE session_id = ?').get(sessionId);
-  return { turnCount: row ? row.turn_count || 0 : 0, hasSummary: !!(row && row.summary) };
+  const row = db
+    .prepare('SELECT turn_count, summary, distilled_turns FROM sessions WHERE session_id = ?')
+    .get(sessionId);
+  return {
+    turnCount: row ? row.turn_count || 0 : 0,
+    hasSummary: !!(row && row.summary),
+    distilledTurns: row && row.distilled_turns != null ? row.distilled_turns : undefined,
+  };
 }
 
 // Called for every ingest signal. Restarts the session's idle timer on new turns, or runs
 // soon after SessionEnd; see lib/distill-schedule.js.
 function maybeDistill(sessionId, event, added) {
   if (!DISTILL_ENABLED || !db || !sessionId) return;
-  const when = scheduleOnIngest({
-    event,
-    added,
-    ...sessionTurnInfo(sessionId),
-    distilledTurns: distilledTurns.get(sessionId),
-  });
+  const when = scheduleOnIngest({ event, added, ...sessionTurnInfo(sessionId) });
   if (!when) return;
   clearTimeout(distillTimers.get(sessionId));
   distillTimers.set(
@@ -212,15 +212,22 @@ function maybeDistill(sessionId, event, added) {
 
 function runDistill(sessionId) {
   distillTimers.delete(sessionId);
-  if (distillRunning.has(sessionId)) return;
-  const { turnCount } = sessionTurnInfo(sessionId);
-  if (!shouldRunNow({ turnCount, distilledTurns: distilledTurns.get(sessionId) })) return;
+  if (distillRunning.has(sessionId)) {
+    // A run is in flight. Check again after it, rather than dropping this trigger: after a
+    // SessionEnd no further Stop will come along to retry it. shouldRunNow then skips the
+    // re-check if the in-flight run already covered every turn.
+    distillTimers.set(sessionId, setTimeout(() => runDistill(sessionId), END_DELAY_MS));
+    return;
+  }
+  const { turnCount, distilledTurns } = sessionTurnInfo(sessionId);
+  if (!shouldRunNow({ turnCount, distilledTurns })) return;
   distillRunning.add(sessionId);
   distiller
     .distillSession(db, sessionId)
     .then((r) => {
-      // Covered either way: a "(no note)" answer must not be retried on every idle.
-      distilledTurns.set(sessionId, turnCount);
+      // Covered either way: a "(no note)" answer must not be retried on every idle, or
+      // after every restart, so this is stored, not kept in memory.
+      db.prepare('UPDATE sessions SET distilled_turns = ? WHERE session_id = ?').run(turnCount, sessionId);
       if (r.updated) {
         console.log(`wrote session note (${r.chars} chars) for session ${sessionId}`);
         broadcast({ type: 'memory:distilled', sessionId });

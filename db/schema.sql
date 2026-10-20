@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   turn_count      INTEGER DEFAULT 0,
   ingested_bytes  INTEGER DEFAULT 0,      -- incremental read offset into the JSONL
   summary         TEXT,                   -- distilled per-session summary
+  distilled_turns INTEGER,                -- turn_count the last distiller run covered (note or "(no note)")
   status          TEXT,                   -- last known: idle|working|waiting|error|completed
   created_at      TEXT DEFAULT (datetime('now')),
   updated_at      TEXT

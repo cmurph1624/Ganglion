@@ -21,7 +21,20 @@ function openDb(dbPath = DEFAULT_DB_PATH) {
   const db = new Database(dbPath);
   const schema = fs.readFileSync(SCHEMA_PATH, 'utf8');
   db.exec(schema);
+  addMissingColumns(db);
   return db;
+}
+
+// CREATE TABLE IF NOT EXISTS never alters an existing table, so columns added to
+// schema.sql after a DB was created are added here. Add-only and nullable: an older
+// server version reading the same file just ignores them.
+const ADDED_COLUMNS = [['sessions', 'distilled_turns', 'INTEGER']];
+
+function addMissingColumns(db) {
+  for (const [table, column, type] of ADDED_COLUMNS) {
+    const have = db.prepare(`PRAGMA table_info(${table})`).all().some((c) => c.name === column);
+    if (!have) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 // Lazily-opened process-wide singleton for the server.
