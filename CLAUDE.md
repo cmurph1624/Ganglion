@@ -61,6 +61,7 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
 | `lib/request-guard.js` | Host + Origin allowlist for every HTTP request and WebSocket — stops other websites (and DNS rebinding) from driving the shells |
+| `lib/message-guard.js` | Input checks for WebSocket messages (bad JSON, missing tabId, missing state) |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
 | `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |

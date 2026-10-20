@@ -23,6 +23,7 @@ const {
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
 const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
+const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
 
 // Distillation makes an LLM call per session to write a narrative session note into
 // sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
@@ -296,7 +297,7 @@ function applySize(tabId) {
 }
 
 function spawnPty(ws, tabId, cwd) {
-  if (typeof tabId !== 'string' || !tabId) return;
+  if (!isTabId(tabId)) return;
   if (ptyProcesses.has(tabId)) {
     ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
     return;
@@ -355,13 +356,8 @@ function handleMessage(ws, msg) {
 }
 
 function dispatchMessage(ws, msg) {
-  let parsed;
-  try {
-    parsed = JSON.parse(msg);
-  } catch {
-    return;
-  }
-  if (!parsed || typeof parsed !== 'object') return;
+  const parsed = parseMessage(msg);
+  if (!parsed) return;
 
   switch (parsed.type) {
     case 'state:load': {
@@ -374,7 +370,7 @@ function dispatchMessage(ws, msg) {
     }
     case 'state:save': {
       // A missing or non-object state would overwrite state.json with garbage.
-      if (!parsed.state || typeof parsed.state !== 'object') break;
+      if (!isSavableState(parsed.state)) break;
       saveState(parsed.state);
       break;
     }
@@ -397,7 +393,7 @@ function dispatchMessage(ws, msg) {
     }
     case 'pty:kill': {
       const tabId = parsed.tabId;
-      if (typeof tabId !== 'string' || !tabId) break;
+      if (!isTabId(tabId)) break;
       const p = ptyProcesses.get(tabId);
       if (p) {
         try { p.kill(); } catch {}
