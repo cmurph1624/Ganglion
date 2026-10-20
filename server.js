@@ -22,6 +22,7 @@ const {
 } = require('./lib/platform');
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
+const { writeFileAtomic, readJsonOrQuarantine } = require('./lib/atomic-write');
 const { END_DELAY_MS, idleDelayMs, scheduleOnIngest, shouldRunNow } = require('./lib/distill-schedule');
 const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
 const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
@@ -108,16 +109,13 @@ function broadcast(msg) {
 }
 
 function loadState() {
-  try {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-  } catch {
-    return { tabs: [], activeTabId: null };
-  }
+  return readJsonOrQuarantine(STATE_FILE, { tabs: [], activeTabId: null });
 }
 
+// Atomic, so a crash or restart mid-save can't leave a truncated state.json (which used
+// to load as an empty tab list and then be overwritten by the next save).
 function saveState(state) {
-  fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  writeFileAtomic(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
 function statusFileFor(tabId) {
