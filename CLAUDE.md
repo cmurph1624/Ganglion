@@ -63,6 +63,7 @@ Don't run that by hand from a session: deploys go through the **deploy** skill /
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index the vault (`npm run memory:import`) |
 | `renderer/memory-panel.js` | Global "Memory" recall overlay (Ctrl/Cmd+K) |
 | `test/*.test.js` | Node test-runner suite (`npm test`) |
+| `test/helpers/server.js` | Integration harness: spawns a real `server.js` with its own `HOME`, `TMPDIR` and an ephemeral port (`PORT=0`) on 127.0.0.1, plus a recording WebSocket client. Used by `test/server-*.test.js`. Any hand-started test server needs the same isolation — signal files live in `os.tmpdir()`, shared with the live service |
 
 ## WebSocket Message Protocol
 All messages are JSON. Key types:

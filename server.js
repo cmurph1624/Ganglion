@@ -40,7 +40,9 @@ const distillRunning = new Set();
 
 // Shared with the desktop client (lib/server-probe.js) so the two cannot disagree about
 // where Ganglion listens.
-const PORT = serverPort();
+// PORT=0 (ephemeral, used by the integration tests) is honoured here rather than in
+// serverPort(), which maps 0 to the default for clients that must know the port.
+const PORT = process.env.PORT === '0' ? 0 : serverPort();
 // A no-op by default. It exists so the listener can later be pinned to a single interface
 // (a Tailscale address, say) without another code change -- see the note about the
 // unauthenticated /file route below.
@@ -625,5 +627,5 @@ setInterval(() => sweepSignalDir({ signals: false }), 60 * 60 * 1000).unref();
 startVaultWatcher();
 
 server.listen(PORT, HOST, () => {
-  console.log(`Ganglion running at http://localhost:${PORT} (bound ${HOST})`);
+  console.log(`Ganglion running at http://localhost:${server.address().port} (bound ${HOST})`);
 });
