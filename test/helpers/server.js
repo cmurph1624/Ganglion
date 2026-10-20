@@ -41,7 +41,9 @@ function isolatedEnv(home, tmp) {
  *   connect:(opts?:object)=>Promise<Client>, request:(opts?:object)=>Promise<{status:number, body:string}>,
  *   stop:()=>Promise<void>, output:()=>string}>}
  */
-async function startServer({ timeoutMs = 15000 } = {}) {
+// env: extra variables for this instance (e.g. GANGLION_NTFY_URL pointed at a local sink),
+// applied after the isolation defaults.
+async function startServer({ timeoutMs = 15000, env = {} } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'gtest-server-'));
   const home = path.join(base, 'home');
   const tmp = path.join(base, 'tmp');
@@ -49,7 +51,7 @@ async function startServer({ timeoutMs = 15000 } = {}) {
   fs.mkdirSync(tmp);
 
   const child = spawn(process.execPath, [SERVER_JS], {
-    env: isolatedEnv(home, tmp),
+    env: { ...isolatedEnv(home, tmp), ...env },
     cwd: base,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

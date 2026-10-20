@@ -23,6 +23,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | Terminal session | browser tab → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js` | in-mem replay buffer (512KB/tab) → `~/.ganglion/state.json` |
 | Terminal sizing | any client → WS `pty:resize` | `handleMessage`, `applySize` | `lib/pty-sizing.js` | in-mem registry (per client, per tab) |
 | Status indicator | Claude hook writes `<tmp>/ganglion-<tab>-status` | `attachStatusWatcher` (`fs.watch`) → broadcast `tab:status` | `lib/platform.js`; `hooks/`; `renderer.js` recolor | none (transient) |
+| Phone alerts (opt-in) | same status-file change | `attachStatusWatcher` → `alerter.onStatus` → `publishNtfy` | `lib/phone-alerts.js` | none (in-mem timers per tab) |
 | Memory capture | `Stop`/`SessionEnd` hook writes `<tmp>/ganglion-<tab>-ingest` | `attachIngestWatcher`, `processIngestSignal` | `memory/ingest.js` | `sessions`, `turns` (+`turns_fts`) |
 | Memory recall | Ctrl/Cmd+K overlay → WS `memory:search` | `handleMessage` (`memory:*`) | `memory/search.js`; `renderer/memory-panel.js` | reads `turns_fts` + `sessions_fts` + `documents_fts` |
 | Session notes (opt-in) | post-session `maybeDistill(sessionId)` | `maybeDistill` (spawns headless `claude -p`) | `memory/distiller.js` | `sessions.summary` (+`sessions_fts`) |
@@ -87,6 +88,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `test/*.test.js` | Node test-runner suite (`npm test`). |
 | `lib/platform.js` | Machine bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
+| `lib/phone-alerts.js` | Phone alerts: per-tab status tracking, alert delay, ntfy JSON publish. |
 | `lib/server-probe.js` | Port resolution (`PORT`, default 3000). |
 | `lib/hook-signal.js` | Pure write-planning for the hook signal files (used by `hooks/ganglion-signal.js`). |
 

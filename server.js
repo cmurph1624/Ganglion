@@ -27,6 +27,7 @@ const { END_DELAY_MS, idleDelayMs, scheduleOnIngest, shouldRunNow } = require('.
 const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
 const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
 const { orphanSignalFiles, expiredPastes } = require('./lib/signal-sweep');
+const { alertConfig, createAlerter, alertMessage, publishNtfy } = require('./lib/phone-alerts');
 
 // Distillation makes an LLM call to write a narrative session note into sessions.summary
 // (searchable in the Memory overlay). It does NOT touch Claude Code's native memory files.
@@ -121,6 +122,19 @@ function saveState(state) {
   writeFileAtomic(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+// Phone alerts (lib/phone-alerts.js). Off unless GANGLION_NTFY_URL is set.
+const ALERTS = alertConfig();
+const alerter = ALERTS && createAlerter({
+  delayMs: ALERTS.delayMs,
+  doneAfterMs: ALERTS.doneAfterMs,
+  send: (alert) => {
+    // Looked up at send time so a rename since the status change is picked up.
+    const tab = (loadState().tabs || []).find((t) => t && t.id === alert.tabId);
+    publishNtfy(ALERTS, alertMessage(alert, tab && tab.name));
+  },
+});
+if (ALERTS) console.log(`phone alerts on (delay ${ALERTS.delayMs / 1000}s, done after ${ALERTS.doneAfterMs / 60000} min)`);
+
 function statusFileFor(tabId) {
   return signalFileFor(tabId, 'status');
 }
@@ -141,8 +155,12 @@ function attachStatusWatcher(tabId) {
   } catch {}
   const read = () => {
     try {
-      const s = fs.readFileSync(file, 'utf8').trim() || 'idle';
+      const raw = fs.readFileSync(file, 'utf8').trim();
+      const s = raw || 'idle';
       broadcast({ type: 'tab:status', tabId, status: s });
+      // An empty read is a hook write caught mid-truncate, not a real status: feeding it
+      // in as idle would reset the run and suppress the next alert.
+      if (alerter && raw) alerter.onStatus(tabId, raw);
     } catch {}
   };
   read();
@@ -178,6 +196,7 @@ function closeStatusWatchers(tabId) {
 // Pane closed or its shell exited: stop watching and remove the status/tool files.
 function detachStatusWatchers(tabId) {
   closeStatusWatchers(tabId);
+  if (alerter) alerter.forget(tabId);
   try { fs.unlinkSync(statusFileFor(tabId)); } catch {}
   try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
 }
