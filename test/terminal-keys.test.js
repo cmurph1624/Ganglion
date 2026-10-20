@@ -210,3 +210,29 @@ test('keyup and keypress are handed back to xterm unchanged', () => {
     assert.strictEqual(result.preventDefault, false, type);
   }
 });
+
+// --- isSearchShortcut(): the scrollback search bar --------------------------------------
+
+const { isSearchShortcut } = require('../renderer/terminal-keys');
+
+test('Ctrl+Shift+F and Cmd+F open search', () => {
+  for (const e of [ev({ key: 'F', ctrlKey: true, shiftKey: true }), ev({ key: 'f', metaKey: true })]) {
+    assert.strictEqual(isSearchShortcut(e), true);
+    assert.deepStrictEqual(classifyTerminalKey(e), { toTerminal: false, preventDefault: true, openSearch: true });
+  }
+});
+
+test('plain Ctrl+F still reaches the shell (readline forward-char)', () => {
+  const e = ev({ key: 'f', ctrlKey: true });
+  assert.strictEqual(isSearchShortcut(e), false);
+  assert.deepStrictEqual(classifyTerminalKey(e), { toTerminal: true, preventDefault: true });
+});
+
+test('search shortcut ignores keyup and other keys', () => {
+  assert.strictEqual(isSearchShortcut(ev({ key: 'g', metaKey: true })), false);
+  assert.strictEqual(isSearchShortcut({}), false);
+  assert.deepStrictEqual(
+    classifyTerminalKey(ev({ type: 'keyup', key: 'f', metaKey: true })),
+    { toTerminal: true, preventDefault: false }
+  );
+});

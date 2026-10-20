@@ -8,7 +8,8 @@ It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the `ganglion` sy
 
 - **Tabs** — `+` to create, `×` to close, double-click to rename; tabs auto-name after the git repo they're in
 - **Right panel** — per tab: hidden, a second terminal, or a markdown viewer (type a path; rendered with GFM, sanitized)
-- **Persistence** — shells keep running when every browser closes; reconnecting replays their recent output. Tab names, working directories, open markdown files and panel layout are saved to `~/.ganglion/state.json`
+- **Persistence** — shells keep running when every browser closes; reconnecting replays their recent output. Tab names, working directories, open markdown files and panel layout are saved to `~/.ganglion/state.json`. A server restart still ends the shells, but each tab's scrollback is saved to `~/.ganglion/scrollback/` and comes back above a fresh prompt
+- **Search** — `Ctrl+Shift+F` (`Cmd+F` on a Mac) searches the focused terminal's scrollback; Enter / Shift+Enter step through matches, Esc closes
 - **Status dot** — per tab, driven by Claude Code hooks in the *left* terminal:
   - 🟢 working · 🔴 waiting for you · ⚪️ idle / not running
 
@@ -42,7 +43,7 @@ Configuration lives in `~/.ganglion/ganglion.env` (mode 600, read by the unit). 
 
 Deploys are deliberate — **a merge to `main` does not deploy.** Use the agent-ops **deploy** skill (`/deploy ganglion`), which runs `.github/workflows/deploy.yml`: CI, then SSH over Tailscale to run `deploy/deploy.sh <ref>` (checkout → `npm ci` → `npm test` → restart → health check).
 
-> ⚠️ **A restart kills every terminal**, including the one you ran it from. Deploy from a plain SSH shell, not a Ganglion tab, at a moment when losing all tabs is fine.
+> ⚠️ **A restart kills every terminal**, including the one you ran it from (their scrollback is kept, the running programs are not). Deploy from a plain SSH shell, not a Ganglion tab, at a moment when losing all tabs is fine.
 
 > ⚠️ **The checkout is live.** The service runs from `/home/ubuntu/dev/Ganglion` and serves `renderer/` straight from disk, so pulling or switching branches there changes what browsers get on reload. Work in a worktree: `git worktree add ../Ganglion-<branch>`.
 

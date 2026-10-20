@@ -135,7 +135,7 @@
    * behind a replay is not seen until the replay has finished.
    *
    * @param {import('@xterm/xterm').Terminal} term
-   * @returns {(data: string, meta?: {replay?: boolean}) => void}
+   * @returns {((data: string, meta?: {replay?: boolean}) => void) & {isReplaying: () => boolean}}
    */
   function attachOsc52(term) {
     let replaying = 0;
@@ -149,11 +149,16 @@
       return true;
     });
 
-    return (data, meta) => {
+    const write = (data, meta) => {
       if (!meta?.replay) { term.write(data); return; }
       replaying++;
       term.write(data, () => { replaying--; });
     };
+    // Old output can hold terminal queries (e.g. DA1 `ESC[c`) that xterm answers through
+    // onData. The caller drops input while this is true, so those answers don't get typed
+    // into the shell -- after a restart, that's a fresh prompt.
+    write.isReplaying = () => replaying > 0;
+    return write;
   }
 
   const api = { parseOsc52, copyText, attachOsc52, MAX_OSC52_BYTES };

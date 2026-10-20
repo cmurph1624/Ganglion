@@ -200,6 +200,53 @@ body { display: flex; flex-direction: column; -webkit-user-select: none; user-se
 }
 .terminal-host { position: absolute; inset: 6px; }
 
+/* Scrollback search bar (terminal-search.js), over the top-right of a terminal. */
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 18px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: var(--shadow);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text);
+}
+.term-search[hidden] { display: none; }
+.term-search input {
+  width: 180px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  font: inherit;
+  outline: none;
+}
+.term-search input:focus { border-color: var(--accent); }
+.term-search-count {
+  min-width: 52px;
+  text-align: right;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.term-search button {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font: inherit;
+}
+.term-search button:hover { background: var(--bg-hover); color: var(--text); }
+
 .divider {
   display: none;
   background: var(--border);

@@ -156,12 +156,14 @@ function makeTerminalConfig() {
 // It used to be copy-pasted into each call site, which is how Ctrl+K came to be wrong in
 // two places at once. The decision itself lives in terminal-keys.js so the memory overlay
 // can read the same rule -- see the header there.
-function attachKeyPolicy(term) {
+function attachKeyPolicy(term, paneEl) {
+  const search = window.ganglionTerminalSearch.attachSearch(term, paneEl);
   term.attachCustomKeyEventHandler((e) => {
-    const { toTerminal, preventDefault, copySelection } =
+    const { toTerminal, preventDefault, copySelection, openSearch } =
       window.ganglionTerminalKeys.classifyTerminalKey(e);
     if (preventDefault) e.preventDefault();
     if (copySelection) window.ganglionClipboard.copyText(term.getSelection());
+    if (openSearch) search.open();
     return toTerminal;
   });
 }
@@ -304,7 +306,7 @@ function renderTab(tabData) {
   term.loadAddon(fitAddon);
   term.open(termHost);
 
-  attachKeyPolicy(term);
+  attachKeyPolicy(term, termPaneEl);
   const writeToTerm = window.ganglionClipboard.attachOsc52(term);
 
   attachImagePasteHandler(termHost, tabData.id);
@@ -314,7 +316,7 @@ function renderTab(tabData) {
     api.ptySpawn(tabData.id, tabData.cwd);
   });
 
-  term.onData((data) => api.ptyWrite(tabData.id, data));
+  term.onData((data) => { if (!writeToTerm.isReplaying()) api.ptyWrite(tabData.id, data); });
   term.onResize(({ cols, rows }) => api.ptyResize(tabData.id, cols, rows));
 
   const disposeData = api.onPtyData(tabData.id, writeToTerm);
@@ -384,7 +386,7 @@ function spawnRightTerminal(entry) {
   termRight.loadAddon(fitAddonRight);
   termRight.open(entry.termHostRight);
 
-  attachKeyPolicy(termRight);
+  attachKeyPolicy(termRight, entry.termPaneRightEl);
   const writeToTermRight = window.ganglionClipboard.attachOsc52(termRight);
 
   attachImagePasteHandler(entry.termHostRight, rightId);
@@ -394,7 +396,7 @@ function spawnRightTerminal(entry) {
     api.ptySpawn(rightId, entry.tabData.cwd);
   });
 
-  termRight.onData((data) => api.ptyWrite(rightId, data));
+  termRight.onData((data) => { if (!writeToTermRight.isReplaying()) api.ptyWrite(rightId, data); });
   termRight.onResize(({ cols, rows }) => api.ptyResize(rightId, cols, rows));
 
   entry.disposeDataRight = api.onPtyData(rightId, writeToTermRight);

@@ -24,6 +24,9 @@ RestartSec=3
 # SIGTERM triggers server.js cleanup() (kills ptys/watchers, exits 0). SQLite WAL
 # auto-recovers on next open, so no explicit checkpoint step is needed on stop.
 KillSignal=SIGTERM
+# Only node gets the SIGTERM; cleanup() saves scrollback, then kills the ptys itself. The
+# rest of the group is SIGKILLed only if it's still there at TimeoutStopSec.
+KillMode=mixed
 TimeoutStopSec=15
 StandardOutput=journal
 StandardError=journal
