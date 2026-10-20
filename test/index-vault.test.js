@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { openDb } = require('../db/db');
-const { indexVault, indexFile, parseNote } = require('../memory/index-vault');
+const { indexVault, indexFile, parseNote, resolveVault } = require('../memory/index-vault');
 
 // Temp dirs are removed once this file's tests finish, so runs don't pile up in /tmp.
 const tmpDirs = [];
@@ -95,4 +95,9 @@ test('indexFile removes a note when its file is gone', () => {
   assert.strictEqual(wrote, false);
   assert.strictEqual(db.prepare('SELECT count(*) c FROM documents').get().c, 0);
   db.close();
+});
+
+test('resolveVault prefers GANGLION_VAULT, else ~/TheBrainOfChris', () => {
+  assert.strictEqual(resolveVault({ GANGLION_VAULT: '/srv/vault' }), '/srv/vault');
+  assert.strictEqual(resolveVault({}), path.join(os.homedir(), 'TheBrainOfChris'));
 });

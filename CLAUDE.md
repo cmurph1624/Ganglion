@@ -59,7 +59,7 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
 | `db/schema.sql`, `db/db.js` | SQLite memory store (`~/.ganglion/memory.db`) schema + connection |
 | `memory/ingest.js` | Incremental ingest of Claude Code transcript JSONL into `turns` |
-| `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` — that path does not exist on this host, so the server's vault watcher no-ops there |
+| `memory/index-vault.js` | Index the Obsidian vault (`GANGLION_VAULT`, default `~/TheBrainOfChris`) into `documents`; the server sweeps it at boot and watches it for changes |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
 | `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
@@ -131,7 +131,7 @@ Backfill notes for existing sessions: `node scripts/backfill-notes.js` (resumabl
 selects sessions whose `summary` is still empty). Backfill turn history + vault:
 `npm run memory:import`. Env knobs: `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_IDLE_MIN`, `GANGLION_DISTILL_MODEL`
 (default `haiku`; the live `~/.ganglion/ganglion.env` sets `sonnet`, and `GANGLION_DISTILL_ENABLED=1`), `GANGLION_VAULT`
-(only read by the standalone `npm run memory:index-vault` CLI; the server's watcher uses the hardcoded path).
+(vault path for the server, the CLI and `memory:import`; default `~/TheBrainOfChris`).
 
 ## Session Persistence
 Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are killed on explicit `pty:kill`, and also by any server stop, restart or crash (`cleanup()` on SIGTERM) — the buffer is in memory only, so a restart loses scrollback too.

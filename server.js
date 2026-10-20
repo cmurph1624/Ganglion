@@ -8,7 +8,7 @@ const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { getDb } = require('./db/db');
 const { ingestTranscript } = require('./memory/ingest');
-const { indexVault, indexFile, DEFAULT_VAULT } = require('./memory/index-vault');
+const { indexVault, indexFile, resolveVault } = require('./memory/index-vault');
 const memorySearch = require('./memory/search');
 const distiller = require('./memory/distiller');
 const {
@@ -314,20 +314,26 @@ function detachIngestWatcher(tabId) {
 let vaultWatcher = null;
 const vaultDebounce = new Map();
 function startVaultWatcher() {
-  if (!db || !fs.existsSync(DEFAULT_VAULT)) return;
+  const vaultRoot = resolveVault();
+  if (!db || !fs.existsSync(vaultRoot)) return;
   // Catch-up sweep off the hot path.
   setImmediate(() => {
-    try { indexVault(db); } catch (err) { console.error('vault sweep failed:', err.message); }
+    try {
+      const r = indexVault(db, { vaultRoot });
+      console.log(`vault ${vaultRoot}: ${r.scanned} notes, ${r.indexed} (re)indexed`);
+    } catch (err) {
+      console.error('vault sweep failed:', err.message);
+    }
   });
   try {
-    vaultWatcher = fs.watch(DEFAULT_VAULT, { persistent: false, recursive: true }, (_evt, rel) => {
+    vaultWatcher = fs.watch(vaultRoot, { persistent: false, recursive: true }, (_evt, rel) => {
       if (!rel || !rel.endsWith('.md')) return;
-      const abs = path.join(DEFAULT_VAULT, rel);
+      const abs = path.join(vaultRoot, rel);
       clearTimeout(vaultDebounce.get(abs));
       vaultDebounce.set(
         abs,
         setTimeout(() => {
-          try { indexFile(db, abs); } catch (err) { console.error('vault index failed:', err.message); }
+          try { indexFile(db, abs, vaultRoot); } catch (err) { console.error('vault index failed:', err.message); }
         }, 1000)
       );
     });

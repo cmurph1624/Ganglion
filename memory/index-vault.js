@@ -4,7 +4,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const DEFAULT_VAULT = path.join(os.homedir(), 'Documents', 'TheBrainOfChris');
+const DEFAULT_VAULT = path.join(os.homedir(), 'TheBrainOfChris');
+
+// The Obsidian vault to index: GANGLION_VAULT, else ~/TheBrainOfChris. One resolver for the
+// server, the CLI and the import script, so they can't disagree about which vault it is.
+function resolveVault(env = process.env) {
+  return env.GANGLION_VAULT || DEFAULT_VAULT;
+}
 const SKIP_DIRS = new Set(['.obsidian', '.trash', '.git', 'node_modules']);
 
 /**
@@ -84,7 +90,7 @@ const upsertSql = `INSERT INTO documents (path, title, body, folder, tags, mtime
      tags = excluded.tags, mtime = excluded.mtime, indexed_at = datetime('now')`;
 
 /** Index (or reindex) a single note. Returns true if written, false if skipped/gone. */
-function indexFile(db, absPath, vaultRoot = DEFAULT_VAULT) {
+function indexFile(db, absPath, vaultRoot = resolveVault()) {
   let stat;
   try {
     stat = fs.statSync(absPath);
@@ -114,7 +120,7 @@ function indexFile(db, absPath, vaultRoot = DEFAULT_VAULT) {
  * Walk the vault, upsert changed notes (mtime-incremental), and prune notes whose
  * files no longer exist. Read-only with respect to the vault files themselves.
  */
-function indexVault(db, { vaultRoot = DEFAULT_VAULT, onProgress } = {}) {
+function indexVault(db, { vaultRoot = resolveVault(), onProgress } = {}) {
   const files = walkMarkdown(vaultRoot);
   const present = new Set(files);
   let indexed = 0;
@@ -135,13 +141,13 @@ function indexVault(db, { vaultRoot = DEFAULT_VAULT, onProgress } = {}) {
   return { scanned: files.length, indexed, skipped };
 }
 
-module.exports = { indexVault, indexFile, parseNote, folderFor, DEFAULT_VAULT };
+module.exports = { indexVault, indexFile, parseNote, folderFor, resolveVault, DEFAULT_VAULT };
 
 // CLI entrypoint: `npm run memory:index-vault`
 if (require.main === module) {
   const { getDb } = require('../db/db');
   const db = getDb();
-  const vaultRoot = process.env.GANGLION_VAULT || DEFAULT_VAULT;
+  const vaultRoot = resolveVault();
   if (!fs.existsSync(vaultRoot)) {
     console.error(`Vault not found: ${vaultRoot}`);
     process.exit(1);
