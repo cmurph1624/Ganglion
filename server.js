@@ -238,6 +238,14 @@ function runDistill(sessionId) {
 }
 
 function attachIngestWatcher(tabId) {
+  // A respawned pty (same tab id) must not leave the previous watcher running alongside
+  // the new one. Close it, but keep the signal file: it may hold a Stop not yet drained.
+  const prev = ingestWatchers.get(tabId);
+  if (prev) {
+    try { prev.close(); } catch {}
+    ingestWatchers.delete(tabId);
+  }
+  clearTimeout(ingestDebounce.get(tabId));
   const file = ingestFileFor(tabId);
   const fire = () => {
     clearTimeout(ingestDebounce.get(tabId));
@@ -369,10 +377,10 @@ function spawnPty(ws, tabId, cwd) {
   // dimensions instead of sitting at the 80x24 above until the next resize.
   applySize(tabId);
 
-  if (!tabId.endsWith('-right')) {
-    attachStatusWatcher(tabId);
-    attachIngestWatcher(tabId);
-  }
+  // Every pane can run Claude Code, so every pane's transcripts get ingested. Only the
+  // left pane drives the tab's status dot, so the right split gets no status watcher.
+  if (!tabId.endsWith('-right')) attachStatusWatcher(tabId);
+  attachIngestWatcher(tabId);
 }
 
 // One bad message must not take the server down: a crash kills every pty.
@@ -443,8 +451,8 @@ function dispatchMessage(ws, msg) {
           toolWatchers.delete(tabId);
         }
         try { fs.unlinkSync(toolFileFor(tabId)); } catch {}
-        detachIngestWatcher(tabId);
       }
+      detachIngestWatcher(tabId);
       break;
     }
     case 'pty:reponame': {
