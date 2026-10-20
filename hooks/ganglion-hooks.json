@@ -1,5 +1,5 @@
 {
-  "_comment": "GANGLION_SIGNAL is replaced with an absolute path by setup-hooks.js. Every event routes through one Node handler that shares lib/platform.js with server.js, so the writer and reader of the signal files cannot disagree about their location. The previous POSIX shell one-liners (printf, [ -n ... ], python3) could not run on Windows.",
+  "_comment": "GANGLION_SIGNAL is replaced with an absolute path by setup-hooks.js. Every event routes through one Node handler that shares lib/platform.js with server.js, so the writer and reader of the signal files cannot disagree about their location.",
   "hooks": {
     "SessionStart": [
       {

@@ -16,7 +16,7 @@ const { classifyTerminalKey, isMemoryShortcut } = require('../renderer/terminal-
 //
 // It sits in renderer/ rather than lib/ for one practical reason: express.static already
 // serves renderer/, so the browser gets it with no new server route -- and therefore no
-// pm2 restart to deploy a key-handling change.
+// server restart to deploy a key-handling change.
 
 /** Build a KeyboardEvent-shaped plain object. Only the fields the policy reads. */
 function ev(overrides = {}) {
@@ -121,7 +121,7 @@ test('Ctrl+Shift+V is left to the browser too', () => {
 
 test('Ctrl+Shift+C copies the selection itself instead of leaving it to the browser', () => {
   // This used to be passed through "so copy works" -- but no browser binds Ctrl+Shift+C to
-  // copy. Chrome opened the DevTools element picker; Electron, with no menu, did nothing.
+  // copy. Chrome opened the DevTools element picker.
   // The terminal has to do the copy, and the browser default has to be stopped.
   const result = classifyTerminalKey(ev({ key: 'C', ctrlKey: true, shiftKey: true }));
   assert.strictEqual(result.toTerminal, false);

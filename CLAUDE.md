@@ -10,7 +10,7 @@ Browsers attach to that one server and **mirror the same live ptys** — in prac
 ## Where It Runs
 Production is a GMKtec M6 Ultra mini PC — hostname `stigmergylabs` (`stigmergylabs.tailc44383.ts.net`, Ubuntu 24.04, 12 cores / 25 GB, headless, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`, `GANGLION_CLAUDE_BIN` and `GANGLION_SWEEP_SIGNALS=1` (boot sweep of stale tab signal files; production only) are set. `setup-server.sh` only creates this file when it is missing, so a new knob in `.env.example` must be added to the live file by hand. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
 
-Earlier hosts are retired: the Dell (tailnet node `stigmergylabs-dell`, offline), before that EC2, and before that a Windows box over RDP. Comments mentioning EC2, security groups, pm2 or Windows paths are leftovers from those.
+Earlier hosts are retired: the Dell (tailnet node `stigmergylabs-dell`, offline), before that EC2, and before that a Windows box over RDP. The Electron desktop client, pm2 config and Windows code paths from those hosts have been removed.
 
 ```bash
 sudo systemctl status ganglion --no-pager
@@ -35,14 +35,6 @@ Don't run that by hand from a session: deploys go through the **deploy** skill /
 
 > ⚠️ **A deploy or `systemctl restart ganglion` kills every pty** — including the one running the command and any Claude Code agents in other tabs. Never trigger it from inside a Ganglion tab (check `echo $GANGLION_TAB_ID`); use a plain SSH shell, at a moment when losing all tabs is fine. See `docs/verify-session-notes-deploy.md`.
 
-## Desktop Client (legacy)
-`npm run desktop` opens an Electron window onto an **already-running** server. It was built for the old Windows-over-RDP host and is **not used on this host**: the box is headless, and the client is hardwired to `http://127.0.0.1:<PORT>` (`lib/server-probe.js`), so it only works on the same machine as the server. Pointing it at a remote host would need a URL override (not implemented). If touching it, keep its two rules:
-
-- **It never spawns a server.** The service manager owns the lifecycle. On launch it probes the port and shows `electron/retry.html` if nothing answers, connecting automatically once the server returns.
-- **It never loads a native module.** `node-pty` and `better-sqlite3` are never required from Electron — so **there is no `electron-rebuild` step**. Requiring `db/`, `memory/`, or either native module from `electron/` would break this.
-
-Launch it as `electron electron/main.js`, never `electron .` — that resolves `package.json:main`, which is `server.js`, and would boot Express inside Electron. Window bounds persist to `~/.ganglion/window.json`; the window has no menu, so terminal keys (`Ctrl+W`, `Ctrl+T`, `Ctrl+L`, `Ctrl+R`, `F5`) reach the shell instead of browser chrome.
-
 ## Architecture
 
 | File | Role |
@@ -62,16 +54,12 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` — that path does not exist on this host, so the server's vault watcher no-ops there |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
-| `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
+| `lib/platform.js` | Machine bindings: shell, signal-file paths, cwd probe (`lsof`), `claude` binary (default `~/.local/bin/claude`) |
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
 | `lib/request-guard.js` | Host + Origin allowlist for every HTTP request and WebSocket — stops other websites (and DNS rebinding) from driving the shells |
 | `lib/message-guard.js` | Input checks for WebSocket messages (bad JSON, missing tabId, missing state) |
 | `lib/distill-schedule.js` | When to write a session note: idle timer per session, soon after `SessionEnd`, skip if nothing new |
-| `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
-| `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
-| `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |
-| `electron/preload.js` | `contextBridge` surface (`isDesktop`, `openMarkdown`, `retry`) |
-| `electron/retry.html` | Standalone "waiting for server" screen |
+| `lib/server-probe.js` | Port resolution (`PORT`, default 3000) |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index the vault (`npm run memory:import`) |
 | `renderer/memory-panel.js` | Global "Memory" recall overlay (Ctrl/Cmd+K) |
 | `test/*.test.js` | Node test-runner suite (`npm test`) |
@@ -175,4 +163,4 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 - **No auth does not mean any website may connect.** `lib/request-guard.js` refuses requests whose `Host` isn't this box (localhost, an IP, the hostname, or `<hostname>.<tailnet>.ts.net`) and browser requests whose `Origin` is another site; the WebSocket gets the same check via `verifyClient`. Reaching Ganglion under another name (e.g. a Mac `/etc/hosts` alias) needs `GANGLION_ALLOWED_HOSTS=name1,name2` in `ganglion.env`.
 - Render markdown only through `renderMarkdown()` (`renderer/markdown.js`), never `marked.parse()` into `innerHTML` — transcripts contain web text, and script on this page can type into a shell.
 - `handleMessage` catches everything a message handler throws: an uncaught throw would exit the process and kill every pty.
-- `pty:cwd` uses `lsof -d cwd` on Linux (`lib/platform.js`). It is inert on Windows (no probe), where tab cwd and git-repo auto-naming do not update
+- `pty:cwd` uses `lsof -d cwd` (`lib/platform.js`); without `lsof`, tab cwd and git-repo auto-naming don't update

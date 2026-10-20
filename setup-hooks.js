@@ -11,9 +11,8 @@ const settingsFile = path.join(settingsDir, 'settings.json');
 const ganglionHooks = JSON.parse(fs.readFileSync(hooksFile, 'utf8')).hooks;
 
 // The hook commands ship with a GANGLION_SIGNAL placeholder because the absolute path to
-// this checkout is only known at install time. Forward slashes are used deliberately: Node
-// accepts them on Windows, and they avoid backslash escaping in both JSON and cmd.exe.
-const signalScript = path.join(__dirname, 'hooks', 'ganglion-signal.js').replace(/\\/g, '/');
+// this checkout is only known at install time.
+const signalScript = path.join(__dirname, 'hooks', 'ganglion-signal.js');
 const signalCommand = `node "${signalScript}"`;
 
 for (const entries of Object.values(ganglionHooks)) {
@@ -43,9 +42,9 @@ if (fs.existsSync(settingsFile)) {
 
 existing.hooks = existing.hooks || {};
 
-// Two markers so re-running is idempotent AND removes legacy hooks: entries written before
-// the Windows port were POSIX shell one-liners that referenced $GANGLION_TAB_ID directly.
-// Leaving those behind on Windows would emit shell errors on every event.
+// Re-running replaces Ganglion's own entries and leaves every other hook alone (the
+// agent-ops deploy-gate and PR-review hooks share this file). 'GANGLION_TAB_ID' also
+// matches the old shell one-liner hooks from before ganglion-signal.js existed.
 const GANGLION_MARKERS = ['GANGLION_TAB_ID', 'ganglion-signal'];
 const isGanglionHook = (h) =>
   typeof h.command === 'string' && GANGLION_MARKERS.some((m) => h.command.includes(m));
