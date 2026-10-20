@@ -136,6 +136,8 @@ Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks 
 
 Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Ganglion).
 
+**Only the left pane has a status colour, by design.** The right-hand terminal (`<tab>-right`) gets no status watcher and the renderer shows nothing for it. Don't add one — the user decided the tab colour follows the left pane only. Right panes *are* ingested into memory.
+
 ## Other Hooks on This Machine
 `~/.claude/settings.json` holds two sets of hooks, and every Claude Code session on the box runs both:
 
