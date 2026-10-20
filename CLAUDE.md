@@ -5,10 +5,12 @@
 ## What It Is
 Ganglion is a terminal multiplexer that runs as a Node.js server on this machine. Each tab pairs a real interactive shell (via `node-pty` + `xterm.js`) with a markdown viewer. Tab colors reflect Claude Code's activity state in that terminal.
 
-Browsers attach to that one server and **mirror the same live ptys** — in practice the Mac, over Tailscale. Several can be connected at once.
+Browsers attach to that one server and **mirror the same live ptys** — in practice the Mac, over Tailscale (any tailnet device can connect). Several can be connected at once.
 
 ## Where It Runs
-Production is the Dell (`stigmergylabs.tailc44383.ts.net`, Ubuntu, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL` and `GANGLION_CLAUDE_BIN` are set. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
+Production is a GMKtec M6 Ultra mini PC — hostname `stigmergylabs` (`stigmergylabs.tailc44383.ts.net`, Ubuntu 24.04, 12 cores / 25 GB, headless, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL` and `GANGLION_CLAUDE_BIN` are set. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
+
+Earlier hosts are retired: the Dell (tailnet node `stigmergylabs-dell`, offline), before that EC2, and before that a Windows box over RDP. Comments mentioning EC2, security groups, pm2 or Windows paths are leftovers from those.
 
 ```bash
 sudo systemctl status ganglion --no-pager
@@ -27,12 +29,14 @@ Runs at **http://localhost:3000** by default. Override with `PORT=XXXX`. `GANGLI
 gh workflow run deploy.yml -f ref=main    # or: git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
+Don't run that by hand from a session: deploys go through the **deploy** skill / **ops** agent in `~/dev/agent-ops` (entry `ganglion` in `ops/deployments.yaml`), and the deploy-gate hook prompts on it anyway. There are no `v*` tags yet, so deploy by SHA via dispatch.
+
 > ⚠️ **The gate only covers restarts — the working tree is live.** The service runs straight out of `/home/ubuntu/dev/Ganglion`, and `express.static` reads `renderer/` from disk on every request. So any `git pull`, `git checkout` or edit in that repo changes what browsers get on their next reload, with no deploy at all. Server-side code (`server.js`, `lib/`, `memory/`, `db/`) only changes on a restart — including a reboot, since the unit is enabled. Do risky or in-progress work on a branch in a separate worktree/clone, not in the live checkout.
 
 > ⚠️ **A deploy or `systemctl restart ganglion` kills every pty** — including the one running the command and any Claude Code agents in other tabs. Never trigger it from inside a Ganglion tab (check `echo $GANGLION_TAB_ID`); use a plain SSH shell, at a moment when losing all tabs is fine. See `docs/verify-session-notes-deploy.md`.
 
 ## Desktop Client (legacy)
-`npm run desktop` opens an Electron window onto an **already-running** server. It was built for the old Windows-over-RDP host and is **not used on the Dell**: the Dell is headless, and the client is hardwired to `http://127.0.0.1:<PORT>` (`lib/server-probe.js`), so it only works on the same machine as the server. Pointing it at a remote host would need a URL override (not implemented). If touching it, keep its two rules:
+`npm run desktop` opens an Electron window onto an **already-running** server. It was built for the old Windows-over-RDP host and is **not used on this host**: the box is headless, and the client is hardwired to `http://127.0.0.1:<PORT>` (`lib/server-probe.js`), so it only works on the same machine as the server. Pointing it at a remote host would need a URL override (not implemented). If touching it, keep its two rules:
 
 - **It never spawns a server.** The service manager owns the lifecycle. On launch it probes the port and shows `electron/retry.html` if nothing answers, connecting automatically once the server returns.
 - **It never loads a native module.** `node-pty` and `better-sqlite3` are never required from Electron — so **there is no `electron-rebuild` step**. Requiring `db/`, `memory/`, or either native module from `electron/` would break this.
@@ -54,7 +58,7 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
 | `db/schema.sql`, `db/db.js` | SQLite memory store (`~/.ganglion/memory.db`) schema + connection |
 | `memory/ingest.js` | Incremental ingest of Claude Code transcript JSONL into `turns` |
-| `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` — that path does not exist on the Dell, so the server's vault watcher no-ops there |
+| `memory/index-vault.js` | Index the Obsidian vault (`~/Documents/TheBrainOfChris`) into `documents` — that path does not exist on this host, so the server's vault watcher no-ops there |
 | `memory/search.js` | Keyword recall (FTS5) over sessions + notes; two-stage retrieve/rank |
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
 | `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
@@ -108,7 +112,7 @@ cross-session memory store. Three concerns:
   in a global browser overlay (🧠 Memory / Ctrl+K) with cited results and click-to-expand
   context. Schema reserves `embedding` columns so semantic search can be added later without
   a rewrite.
-- **Distillation → session notes** — after a session, a distiller runs headless `claude -p`
+- **Distillation → session notes** — after Claude stops (currently every `Stop` that ingests new turns, debounced 3s per session — so in practice once per turn, not once per session), a distiller runs headless `claude -p`
   and writes ONE narrative note (≈120–250 words) into the `sessions.summary` column of
   `~/.ganglion/memory.db`, auto-indexed into `sessions_fts` (via the `sessions_au` trigger)
   and surfaced as the **"Session notes"** recall source. It **does not** touch Claude Code's
@@ -126,7 +130,7 @@ selects sessions whose `summary` is still empty). Backfill turn history + vault:
 (only read by the standalone `npm run memory:index-vault` CLI; the server's watcher uses the hardcoded path).
 
 ## Session Persistence
-Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are only killed on explicit `pty:kill`.
+Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are killed on explicit `pty:kill`, and also by any server stop, restart or crash (`cleanup()` on SIGTERM) — the buffer is in memory only, so a restart loses scrollback too.
 
 ## Claude Code Status Indicators
 Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks write status tokens to `/tmp/ganglion-<tabId>-status` and tool names to `/tmp/ganglion-<tabId>-tool`. The server watches these files with `fs.watch` and broadcasts `tab:status` / `tab:tool` events.
@@ -139,6 +143,19 @@ Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks 
 
 Hooks are no-ops when `GANGLION_TAB_ID` is unset (running `claude` outside Ganglion).
 
+## Other Hooks on This Machine
+`~/.claude/settings.json` holds two sets of hooks, and every Claude Code session on the box runs both:
+
+| Owner | Hook | Event / matcher | What it does |
+|---|---|---|---|
+| Ganglion (`npm run setup-hooks`) | `hooks/ganglion-signal.js` | every event | Tab status, tool name, ingest signal (above) |
+| agent-ops (`~/dev/agent-ops/install.sh`) | `claude/hooks/deploy-gate.py` | `PreToolUse`: `Bash`, `mcp__supabase.*`, `Artifact` | Turns deploy-shaped commands into a permission prompt — including `systemctl restart ganglion` and git checkout/pull in this live checkout |
+| agent-ops | `claude/hooks/on-pr-push.py` | `PostToolUse`: `Bash` | After `gh pr create` / `git push`, nudges the session to run the **pr-review-loop** skill — only for repos in `agent-ops/review/repos.txt` |
+
+- `setup-hooks.js` replaces only entries whose command mentions `ganglion-signal` / `GANGLION_TAB_ID`, so re-running it leaves the agent-ops hooks alone. Keep it that way.
+- The hook commands point at the **live checkout** (`/home/ubuntu/dev/Ganglion/hooks/ganglion-signal.js`), so an edit there takes effect in every session immediately — a bug in it breaks status and ingest everywhere. Change it in a worktree and test before merging.
+- Automated PR review (`pr-review.timer` in agent-ops) only covers repos listed in `review/repos.txt`. Check that file to see whether Ganglion PRs get reviewed.
+
 ## State Persistence
 Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.ganglion/state.json` on every change and restored on load.
 
@@ -146,6 +163,7 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 
 ## Key Constraints
 - The `ubuntu` user has passwordless `sudo` (`deploy.sh` relies on it). Still confirm before any `sudo` that restarts the service or changes the host
+- Do branch work in a worktree (`git worktree add ../Ganglion-<branch>`), never by switching branches in `/home/ubuntu/dev/Ganglion` — the deploy gate prompts on checkout/pull there
 - Never `systemctl restart ganglion` or trigger a deploy from inside a Ganglion tab — it kills every pty, including the one running the command (see Deploy)
 - Scripts needing env vars must source `.env` explicitly
 - **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.

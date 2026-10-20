@@ -9,10 +9,10 @@ Ganglion is a terminal multiplexer + always-on cross-session memory layer.
 A single Node process (`server.js`) serves the UI, manages `node-pty` shells over WebSocket,
 watches Claude Code hook files, and owns the SQLite memory store.
 
-It runs on the Dell (Ubuntu) as the systemd `ganglion` service (`deploy/ganglion.service`,
+It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the systemd `ganglion` service (`deploy/ganglion.service`,
 config in `~/.ganglion/ganglion.env`). Browsers attach to that one process and **mirror the same
 ptys** — in practice the Mac, over Tailscale. A legacy Electron desktop shell (`electron/`) also
-exists, but it connects only to `127.0.0.1` and the Dell is headless, so it is unused there.
+exists, but it connects only to `127.0.0.1` and the host is headless, so it is unused there.
 
 ## Data flows
 
@@ -90,7 +90,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` (idempotent; backs up first). |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index vault (`npm run memory:import`). |
 | `deploy/ganglion.service`, `deploy/deploy.sh`, `deploy/setup-server.sh` | systemd unit, CI-invoked redeploy, one-time host bootstrap. |
-| `ecosystem.config.js` | Legacy pm2 process definition from the Windows host; unused on the Dell. |
+| `ecosystem.config.js` | Legacy pm2 process definition from the Windows host; unused. |
 | `test/*.test.js` | Node test-runner suite (`npm test`). |
 | `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
