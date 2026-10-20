@@ -155,9 +155,12 @@ function attachStatusWatcher(tabId) {
   } catch {}
   const read = () => {
     try {
-      const s = fs.readFileSync(file, 'utf8').trim() || 'idle';
+      const raw = fs.readFileSync(file, 'utf8').trim();
+      const s = raw || 'idle';
       broadcast({ type: 'tab:status', tabId, status: s });
-      if (alerter) alerter.onStatus(tabId, s);
+      // An empty read is a hook write caught mid-truncate, not a real status: feeding it
+      // in as idle would reset the run and suppress the next alert.
+      if (alerter && raw) alerter.onStatus(tabId, raw);
     } catch {}
   };
   read();

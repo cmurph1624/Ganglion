@@ -84,6 +84,17 @@ test('a long run that goes idle sends a done alert; a short one does not', () =>
   assert.strictEqual(h.sent[0].ranMs, 4 * 60000 + 10000 + 60000);
 });
 
+test('the after-reply reminder does not cancel a pending done alert (delay over 60s)', () => {
+  const h = harness({ delayMs: 90000 });
+  h.alerter.onStatus('a', 'working');
+  h.advance(6 * 60000);
+  h.alerter.onStatus('a', 'idle');
+  h.advance(60000);
+  h.alerter.onStatus('a', 'waiting'); // Claude Code's idle reminder
+  h.advance(31000);
+  assert.deepStrictEqual(h.sent.map((a) => a.kind), ['done']);
+});
+
 test('a new prompt within the delay cancels the done alert', () => {
   const h = harness();
   h.alerter.onStatus('a', 'working');
