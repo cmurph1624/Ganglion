@@ -47,14 +47,28 @@
   }
 
   /**
+   * Is this the scrollback search shortcut? Ctrl+Shift+F, or Cmd+F on a Mac. Plain Ctrl+F
+   * stays with the shell: readline uses it to move forward a character.
+   *
+   * @param {{key?: unknown, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean}} e
+   * @returns {boolean}
+   */
+  function isSearchShortcut(e) {
+    if (!e || typeof e.key !== 'string' || e.key.toLowerCase() !== 'f') return false;
+    if (e.metaKey && !e.ctrlKey) return true;
+    return !!(e.ctrlKey && e.shiftKey && !e.metaKey);
+  }
+
+  /**
    * Decide what happens to a key event that landed on a terminal.
    *
    * @param {{type?: string, key?: unknown, ctrlKey?: boolean, metaKey?: boolean, shiftKey?: boolean}} e
-   * @returns {{toTerminal: boolean, preventDefault: boolean, copySelection?: boolean}}
+   * @returns {{toTerminal: boolean, preventDefault: boolean, copySelection?: boolean, openSearch?: boolean}}
    *   `toTerminal` is the value to return from attachCustomKeyEventHandler: true lets
    *   xterm process the key (and so reach the pty), false makes xterm ignore it and leaves
    *   the event to whoever else is listening. `copySelection` asks the caller to copy the
-   *   terminal's selection itself, because no browser will.
+   *   terminal's selection itself, because no browser will. `openSearch` asks it to open
+   *   the terminal's search bar; the browser's own find is suppressed.
    */
   function classifyTerminalKey(e) {
     // Only keydown is ours. xterm tracks modifier state on keyup, so declining one would
@@ -65,6 +79,7 @@
     // own handler does that when it acts, so the suppression stays next to the behaviour
     // instead of being split across two files again.
     if (isMemoryShortcut(e)) return { toTerminal: false, preventDefault: false };
+    if (isSearchShortcut(e)) return { toTerminal: false, preventDefault: true, openSearch: true };
 
     // `!metaKey` matters: on a Mac, Cmd+C / Cmd+V arrive with metaKey set, and swallowing
     // those would break copy and paste in the browser front-end.
@@ -91,7 +106,7 @@
     return { toTerminal: true, preventDefault: false };
   }
 
-  const api = { classifyTerminalKey, isMemoryShortcut };
+  const api = { classifyTerminalKey, isMemoryShortcut, isSearchShortcut };
 
   // Loaded two ways: as a classic <script> by renderer/index.html, and by require() from
   // test/terminal-keys.test.js.

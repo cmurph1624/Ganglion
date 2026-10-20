@@ -20,7 +20,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 
 | Flow | Trigger / entry | Server handler (`server.js`) | Module(s) | Storage |
 |---|---|---|---|---|
-| Terminal session | browser tab → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js` | in-mem replay buffer (512KB/tab) → `~/.ganglion/state.json` |
+| Terminal session | browser tab → WS `pty:spawn` | `spawnPty`, `handleMessage` (`pty:*`) | `node-pty`; `renderer/renderer.js`, `client.js`; `lib/scrollback.js` | in-mem replay buffer (512KB/tab), flushed to `~/.ganglion/scrollback/<tab>.log`; tab list → `~/.ganglion/state.json` |
 | Terminal sizing | any client → WS `pty:resize` | `handleMessage`, `applySize` | `lib/pty-sizing.js` | in-mem registry (per client, per tab) |
 | Status indicator | Claude hook writes `<tmp>/ganglion-<tab>-status` | `attachStatusWatcher` (`fs.watch`) → broadcast `tab:status` | `lib/platform.js`; `hooks/`; `renderer.js` recolor | none (transient) |
 | Phone alerts (opt-in) | same status-file change | `attachStatusWatcher` → `alerter.onStatus` → `publishNtfy` | `lib/phone-alerts.js` | none (in-mem timers per tab) |
@@ -56,6 +56,9 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   pty *and* the overlay opened) — and `preventDefault` cannot undo that, since it does not stop
   propagation and xterm has already acted. Add an app shortcut in that module, not at a call site.
 - **Ptys survive disconnect** — buffered + replayed on reconnect (`pty:replay`); killed only on explicit `pty:kill`.
+- **Scrollback survives a restart, shells don't** — buffers are flushed to `~/.ganglion/scrollback/`
+  every 5s and on SIGTERM (`lib/scrollback.js`); a respawned pane replays the saved text above a
+  fresh shell. `cleanup()` sets `shuttingDown` first so the exit handlers it triggers don't delete them.
 - **State saved on every change** to `~/.ganglion/state.json`.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added
   later with no schema rewrite. Do not repurpose them.
@@ -74,6 +77,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `renderer/client.js` | WebSocket client abstraction. |
 | `renderer/memory-panel.js` | Global recall overlay (🧠 / Ctrl+K); cited results, click-to-expand context. |
 | `renderer/terminal-keys.js` | Pure key policy shared by the terminals and the overlay: pty vs browser vs app. Dual-loaded (`<script>` + `require`). |
+| `renderer/terminal-search.js` | Scrollback search bar per terminal (Ctrl+Shift+F / Cmd+F), on `@xterm/addon-search`. |
 | `renderer/styles.css` | Styles. |
 | `memory/ingest.js` | Incremental ingest of transcript JSONL → `turns` (byte-offset tracked; `INSERT OR IGNORE` on `uuid`). |
 | `memory/search.js` | FTS5 keyword recall over `turns` + `documents`; two-stage retrieve/rank; structured filters. |
@@ -90,6 +94,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
 | `lib/phone-alerts.js` | Phone alerts: per-tab status tracking, alert delay, ntfy JSON publish. |
 | `lib/server-probe.js` | Port resolution (`PORT`, default 3000). |
+| `lib/scrollback.js` | Scrollback on disk across restarts: load/save/prune, restored-buffer reset + separator. |
 | `lib/hook-signal.js` | Pure write-planning for the hook signal files (used by `hooks/ganglion-signal.js`). |
 
 ## Database (`~/.ganglion/memory.db`)

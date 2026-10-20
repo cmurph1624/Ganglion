@@ -43,11 +43,12 @@ function isolatedEnv(home, tmp) {
  */
 // env: extra variables for this instance (e.g. GANGLION_NTFY_URL pointed at a local sink),
 // applied after the isolation defaults.
-async function startServer({ timeoutMs = 15000, env = {} } = {}) {
+// home: reuse an existing HOME (to restart "the same" server); the caller owns and removes it.
+async function startServer({ timeoutMs = 15000, env = {}, home: sharedHome } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'gtest-server-'));
-  const home = path.join(base, 'home');
+  const home = sharedHome || path.join(base, 'home');
   const tmp = path.join(base, 'tmp');
-  fs.mkdirSync(home);
+  if (!sharedHome) fs.mkdirSync(home);
   fs.mkdirSync(tmp);
 
   const child = spawn(process.execPath, [SERVER_JS], {

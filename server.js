@@ -28,6 +28,7 @@ const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guar
 const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
 const { orphanSignalFiles, expiredPastes } = require('./lib/signal-sweep');
 const { alertConfig, createAlerter, alertMessage, publishNtfy } = require('./lib/phone-alerts');
+const scrollback = require('./lib/scrollback');
 
 // Distillation makes an LLM call to write a narrative session note into sessions.summary
 // (searchable in the Memory overlay). It does NOT touch Claude Code's native memory files.
@@ -53,6 +54,13 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 
 const ptyProcesses = new Map();
 const ptyBuffers = new Map();
+// Scrollback kept on disk across restarts (lib/scrollback.js). Buffers that changed since
+// the last flush are written every few seconds; shuttingDown stops the exit handlers that
+// SIGTERM sets off from deleting the files the shutdown flush just wrote.
+const SCROLLBACK_DIR = scrollback.scrollbackDir();
+const SCROLLBACK_FLUSH_MS = 5000;
+const dirtyBuffers = new Set();
+let shuttingDown = false;
 const statusWatchers = new Map();
 const clients = new Set();
 // Every client's desired terminal size, keyed by the WebSocket itself. Ganglion mirrors,
@@ -83,6 +91,7 @@ app.use(express.static(path.join(__dirname, 'renderer')));
 app.get('/xterm.css', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/css/xterm.css')));
 app.get('/xterm.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/lib/xterm.js')));
 app.get('/addon-fit.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-fit/lib/addon-fit.js')));
+app.get('/addon-search.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-search/lib/addon-search.js')));
 app.get('/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.js')));
 app.get('/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
 
@@ -431,6 +440,43 @@ function applySize(tabId) {
   try { p.resize(size.cols, size.rows); } catch {}
 }
 
+// Tab closed or its shell exited: its scrollback has no tab to come back to.
+function forgetScrollback(tabId) {
+  dirtyBuffers.delete(tabId);
+  scrollback.remove(SCROLLBACK_DIR, tabId);
+}
+
+let flushing = false;
+async function flushScrollback() {
+  if (flushing || shuttingDown) return;
+  flushing = true;
+  try {
+    for (const tabId of [...dirtyBuffers]) {
+      dirtyBuffers.delete(tabId);
+      const buf = ptyBuffers.get(tabId);
+      if (buf === undefined) continue;
+      try {
+        await scrollback.save(SCROLLBACK_DIR, tabId, buf);
+      } catch (err) {
+        console.error('scrollback save failed:', err.message);
+      }
+      // Closed while the write was in flight: don't leave its file behind.
+      if (!ptyBuffers.has(tabId)) scrollback.remove(SCROLLBACK_DIR, tabId);
+    }
+  } finally {
+    flushing = false;
+  }
+}
+
+function flushScrollbackSync() {
+  for (const [tabId, buf] of ptyBuffers) {
+    if (!buf) continue;
+    try { scrollback.saveSync(SCROLLBACK_DIR, tabId, buf); } catch (err) {
+      console.error('scrollback save failed:', err.message);
+    }
+  }
+}
+
 function spawnPty(ws, tabId, cwd) {
   if (!isTabId(tabId)) return;
   if (ptyProcesses.has(tabId)) {
@@ -453,11 +499,19 @@ function spawnPty(ws, tabId, cwd) {
     env
   });
   ptyProcesses.set(tabId, p);
-  ptyBuffers.set(tabId, '');
+  // A pane that had output before a restart starts with it, above the new shell.
+  const restored = scrollback.restoredBuffer(scrollback.load(SCROLLBACK_DIR, tabId));
+  ptyBuffers.set(tabId, restored);
+  if (restored) {
+    dirtyBuffers.add(tabId);
+    ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: restored }));
+  }
   p.onData((data) => {
     const current = ptyBuffers.get(tabId) || '';
     const updated = current + data;
-    ptyBuffers.set(tabId, updated.length > 512000 ? updated.slice(-512000) : updated);
+    const max = scrollback.MAX_BYTES;
+    ptyBuffers.set(tabId, updated.length > max ? updated.slice(-max) : updated);
+    dirtyBuffers.add(tabId);
     broadcast({ type: 'pty:data', tabId, data });
   });
   p.onExit(() => {
@@ -465,10 +519,12 @@ function spawnPty(ws, tabId, cwd) {
     // gone; if a new pty took the id, its state and watchers are not ours to remove.
     const current = ptyProcesses.get(tabId);
     if (current && current !== p) return;
+    if (shuttingDown) return;
     if (!tabId.endsWith('-right')) detachStatusWatchers(tabId);
     detachIngestWatcher(tabId);
     ptyProcesses.delete(tabId);
     ptyBuffers.delete(tabId);
+    forgetScrollback(tabId);
     // Otherwise a tab id reused by a later spawn inherits the dimensions clients measured
     // against this now-dead pty.
     sizes.removeTab(tabId);
@@ -540,6 +596,7 @@ function dispatchMessage(ws, msg) {
         ptyProcesses.delete(tabId);
       }
       ptyBuffers.delete(tabId);
+      forgetScrollback(tabId);
       sizes.removeTab(tabId);
       if (!tabId.endsWith('-right')) detachStatusWatchers(tabId);
       detachIngestWatcher(tabId);
@@ -640,6 +697,9 @@ wss.on('connection', (ws) => {
 });
 
 function cleanup() {
+  // Save scrollback before the ptys go: killing them fires their exit handlers.
+  shuttingDown = true;
+  flushScrollbackSync();
   for (const p of ptyProcesses.values()) {
     try { p.kill(); } catch {}
   }
@@ -668,6 +728,17 @@ sweepSignalDir({ signals: process.env.GANGLION_SWEEP_SIGNALS === '1' });
 // Pastes keep arriving while the server runs; tab signal files are handled by kill/exit.
 setInterval(() => sweepSignalDir({ signals: false }), 60 * 60 * 1000).unref();
 startVaultWatcher();
+
+// Drop saved scrollback for tabs that no longer exist. Skipped when state.json has no
+// tabs, so a lost or quarantined state file doesn't take every tab's history with it.
+{
+  const tabIds = (loadState().tabs || []).map((t) => t && t.id).filter(Boolean);
+  if (tabIds.length) {
+    const n = scrollback.prune(SCROLLBACK_DIR, tabIds);
+    if (n) console.log(`removed ${n} stale scrollback file(s)`);
+  }
+}
+setInterval(() => { flushScrollback(); }, SCROLLBACK_FLUSH_MS).unref();
 
 server.listen(PORT, HOST, () => {
   console.log(`Ganglion running at http://localhost:${server.address().port} (bound ${HOST})`);

@@ -44,6 +44,7 @@ Don't run that by hand from a session: deploys go through the **deploy** skill /
 | `renderer/renderer.js` | Tab UI, xterm.js wiring, markdown rendering, divider |
 | `renderer/client.js` | WebSocket client abstraction |
 | `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
+| `renderer/terminal-search.js` | Scrollback search bar for each terminal (Ctrl+Shift+F / Cmd+F), on xterm's search addon |
 | `renderer/clipboard.js` | Terminal → local clipboard: OSC 52 handler (how Claude Code copies on a headless box), Ctrl+Shift+C copy, click-to-copy fallback when the browser blocks a write; skips replayed output |
 | `renderer/markdown.js` | `renderMarkdown()` — `marked` + DOMPurify; the only way markdown may reach `innerHTML` |
 | `renderer/styles.css` | Styles |
@@ -61,6 +62,7 @@ Don't run that by hand from a session: deploys go through the **deploy** skill /
 | `lib/phone-alerts.js` | Phone alerts via ntfy: when a red tab or a finished long run is worth a push, and the publish call. Off unless `GANGLION_NTFY_URL` is set |
 | `lib/distill-schedule.js` | When to write a session note: idle timer per session, soon after `SessionEnd`, skip if nothing new |
 | `lib/server-probe.js` | Port resolution (`PORT`, default 3000) |
+| `lib/scrollback.js` | Scrollback saved to `~/.ganglion/scrollback/` so it survives a restart: load/save/prune, and the restored-buffer reset + separator |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index the vault (`npm run memory:import`) |
 | `renderer/memory-panel.js` | Global "Memory" recall overlay (Ctrl/Cmd+K) |
 | `test/*.test.js` | Node test-runner suite (`npm test`) |
@@ -124,7 +126,11 @@ selects sessions whose `summary` is still empty). Backfill turn history + vault:
 (vault path for the server, the CLI and `memory:import`; default `~/TheBrainOfChris`).
 
 ## Session Persistence
-Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are killed on explicit `pty:kill`, and also by any server stop, restart or crash (`cleanup()` on SIGTERM) — the buffer is in memory only, so a restart loses scrollback too.
+Pty processes survive browser close/refresh. Output is buffered in memory per tab (capped at 512KB). On reconnect, the server sends a `pty:replay` message so the terminal restores history. Processes are killed on explicit `pty:kill`, and also by any server stop, restart or crash (`cleanup()` on SIGTERM).
+
+**Scrollback survives a restart; the shells don't.** `lib/scrollback.js` keeps each pane's buffer in `~/.ganglion/scrollback/<tabId>.log` (dir 700, files 600): changed buffers are flushed every 5s, and `cleanup()` flushes once more before killing the ptys. When a pane respawns after a restart, its new buffer starts with the saved text, a terminal-mode reset (leaves the alternate screen, turns mouse tracking off) and a dim "restored from before restart" line, with a fresh shell underneath. A crash loses up to the last 5s. The file goes when the tab closes (`pty:kill`) or its shell exits; at boot, files for tabs not in `state.json` are pruned (skipped if `state.json` has no tabs). These files hold whatever was on screen, secrets included.
+
+**Search:** Ctrl+Shift+F (Cmd+F on the Mac) opens a search bar over the focused terminal (`renderer/terminal-search.js`, xterm's search addon). Plain Ctrl+F still goes to the shell.
 
 ## Claude Code Status Indicators
 Each pty is spawned with `GANGLION_TAB_ID=<uuid>` in its env. Claude Code hooks write status tokens to `/tmp/ganglion-<tabId>-status` and tool names to `/tmp/ganglion-<tabId>-tool`. The server watches these files with `fs.watch` and broadcasts `tab:status` / `tab:tool` events.
