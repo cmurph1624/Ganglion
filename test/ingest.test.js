@@ -9,8 +9,13 @@ const { openDb } = require('../db/db');
 const { ingestTranscript } = require('../memory/ingest');
 
 // Build a fake transcript dir so projectSlugFor() yields a stable slug.
+// Temp dirs are removed once this file's tests finish, so runs don't pile up in /tmp.
+const tmpDirs = [];
+test.after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function tmpTranscript() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-proj-'));
+  tmpDirs.push(dir);
   return path.join(dir, 'session-abc.jsonl');
 }
 

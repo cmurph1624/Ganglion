@@ -8,8 +8,14 @@ const path = require('path');
 const { openDb } = require('../db/db');
 const { indexVault, indexFile, parseNote } = require('../memory/index-vault');
 
+// Temp dirs are removed once this file's tests finish, so runs don't pile up in /tmp.
+const tmpDirs = [];
+test.after(() => { for (const d of tmpDirs) fs.rmSync(d, { recursive: true, force: true }); });
+
 function tmpVault() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-vault-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ganglion-vault-'));
+  tmpDirs.push(dir);
+  return dir;
 }
 
 test('parseNote extracts title, block-list tags, and strips frontmatter', () => {
