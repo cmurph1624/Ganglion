@@ -396,7 +396,6 @@ function spawnPty(ws, tabId, cwd) {
   const resolvedCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
 
   const env = { ...process.env };
-  delete env.ELECTRON_RUN_AS_NODE;
   env.GANGLION_TAB_ID = tabId;
   env.TERM = 'xterm-256color';
   env.COLORTERM = 'truecolor';
@@ -570,12 +569,6 @@ function dispatchMessage(ws, msg) {
         break;
       }
       const probe = cwdProbe(p.pid);
-      if (!probe) {
-        // No supported cwd probe on this platform (Windows). Answer immediately rather
-        // than spawning a command that cannot exist.
-        ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));
-        break;
-      }
       execFile(probe.command, probe.args, (err, stdout) => {
         if (err) {
           ws.send(JSON.stringify({ type: 'pty:cwd:result', reqId: parsed.reqId, cwd: null }));

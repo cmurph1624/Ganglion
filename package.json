@@ -5,7 +5,6 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "desktop": "electron electron/main.js",
     "setup-hooks": "node setup-hooks.js",
     "test": "node --test",
     "memory:import": "node scripts/import-history.js",
@@ -20,8 +19,5 @@
     "marked": "^18.0.3",
     "node-pty": "^1.0.0",
     "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "electron": "^43.2.0"
   }
 }

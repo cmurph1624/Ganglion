@@ -16,7 +16,7 @@ const { openDb } = require('../db/db');
 const distiller = require('../memory/distiller');
 
 // Session notes are the durable searchable artifact — default to the stronger model
-// unless the caller overrides it. (Matches the distiller's live pm2 setting.)
+// unless the caller overrides it. (Matches GANGLION_DISTILL_MODEL in the live ganglion.env.)
 if (!process.env.GANGLION_DISTILL_MODEL) process.env.GANGLION_DISTILL_MODEL = 'sonnet';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

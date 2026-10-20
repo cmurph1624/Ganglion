@@ -24,7 +24,7 @@
 //
 // Lives in renderer/ rather than lib/ deliberately: express.static already serves this
 // directory, so the browser picks it up with no new server route -- and therefore key
-// handling stays deployable by reload rather than by pm2 restart.
+// handling stays deployable by reload rather than by a server restart.
 
 (() => {
   /**
@@ -77,8 +77,7 @@
         return { toTerminal: false, preventDefault: false };
       }
       // Copy does not: Ctrl+Shift+C is a terminal convention, not a browser shortcut. Chrome
-      // opens the DevTools element picker on it and Electron (no menu) does nothing, so no
-      // copy event ever reaches xterm. The caller copies the selection itself, and the
+      // opens the DevTools element picker on it, so no copy event ever reaches xterm. The caller copies the selection itself, and the
       // browser's default is suppressed.
       if (e.shiftKey && key === 'C') {
         return { toTerminal: false, preventDefault: true, copySelection: true };

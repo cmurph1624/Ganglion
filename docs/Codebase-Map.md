@@ -11,8 +11,7 @@ watches Claude Code hook files, and owns the SQLite memory store.
 
 It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the systemd `ganglion` service (`deploy/ganglion.service`,
 config in `~/.ganglion/ganglion.env`). Browsers attach to that one process and **mirror the same
-ptys** — in practice the Mac, over Tailscale. A legacy Electron desktop shell (`electron/`) also
-exists, but it connects only to `127.0.0.1` and the host is headless, so it is unused there.
+ptys** — in practice the Mac, over Tailscale.
 
 ## Data flows
 
@@ -31,8 +30,8 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 
 ## Invariants (do not violate)
 
-- **Signal paths come from `lib/platform.js`** — `<tmp>` above is `os.tmpdir()` (`%TEMP%` on
-  Windows, `/tmp` on POSIX). The hooks *write* these files and `server.js` *reads* them; if the
+- **Signal paths come from `lib/platform.js`** — `<tmp>` above is `os.tmpdir()` (`/tmp`, or
+  `$TMPDIR` if set). The hooks *write* these files and `server.js` *reads* them; if the
   two halves ever disagree about the directory, Ganglion boots and terminals work while status
   dots never update and no session is ever ingested — silently. Never hardcode `/tmp`.
 - **Hooks no-op without `GANGLION_TAB_ID`** — running `claude` outside Ganglion writes nothing.
@@ -44,11 +43,6 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   tab would keep a stale size while its pty draws at the real width, and output from agents
   running in background tabs (plus replay) lands garbled. Consequence: every client reports a
   size for every tab, so the minimum-over-clients rule applies to all tabs, not just open ones.
-- **The desktop shell never spawns a server and never loads a native module** — it opens a window
-  onto the already-running server. Requiring `node-pty`/`better-sqlite3`/`db/`/`memory/` from
-  `electron/` would reintroduce an Electron ABI rebuild step and let a closing window kill ptys
-  the browser is still using. Launch it as `electron electron/main.js`, never `electron .` (which
-  would resolve `package.json:main` and boot `server.js` inside Electron).
 - **Distiller writes session notes only** — one narrative note into `sessions.summary`, surfaced
   in recall as "Session notes". It does **not** touch Claude Code's native `memory/*.md`; native
   auto-memory solely owns durable injected facts. Off by default (`GANGLION_DISTILL_ENABLED=1`
@@ -90,16 +84,11 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` (idempotent; backs up first). |
 | `scripts/import-history.js` | One-time backfill: ingest all transcripts + index vault (`npm run memory:import`). |
 | `deploy/ganglion.service`, `deploy/deploy.sh`, `deploy/setup-server.sh` | systemd unit, CI-invoked redeploy, one-time host bootstrap. |
-| `ecosystem.config.js` | Legacy pm2 process definition from the Windows host; unused. |
 | `test/*.test.js` | Node test-runner suite (`npm test`). |
-| `lib/platform.js` | Windows/POSIX bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
+| `lib/platform.js` | Machine bindings: shell + args, signal-file paths, cwd probe, `claude` binary. |
 | `lib/pty-sizing.js` | Per-client size registry; the pty takes the minimum over attached clients. |
-| `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing HTTP health probe. |
-| `lib/window-bounds.js` | Validates persisted desktop-window bounds against the current displays. |
+| `lib/server-probe.js` | Port resolution (`PORT`, default 3000). |
 | `lib/hook-signal.js` | Pure write-planning for the hook signal files (used by `hooks/ganglion-signal.js`). |
-| `electron/main.js` | Desktop shell: window, remembered bounds, health probe/retry, file dialog, key policy. |
-| `electron/preload.js` | `contextBridge` surface exposed to the page (`isDesktop`, `openMarkdown`, `retry`). |
-| `electron/retry.html` | Standalone "waiting for server" screen; loads none of `renderer/`. |
 
 ## Database (`~/.ganglion/memory.db`)
 
