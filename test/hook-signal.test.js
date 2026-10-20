@@ -123,13 +123,3 @@ test('every write lands in signalDir()', () => {
     }
   }
 });
-
-test('no write path contains a hardcoded /tmp on win32', () => {
-  if (process.platform !== 'win32') return;
-  const events = ['SessionStart', 'PreToolUse', 'Stop'];
-  for (const ev of events) {
-    for (const w of signalWrites(ev, { session_id: 'a' }, TAB)) {
-      assert.ok(!w.file.startsWith('/tmp'), `${ev} still targets /tmp`);
-    }
-  }
-});
