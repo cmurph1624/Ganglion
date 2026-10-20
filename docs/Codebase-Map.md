@@ -57,7 +57,7 @@ state lives under `~/.ganglion/` (`state.json`, `memory.db`, `memory-backups/`).
   propagation and xterm has already acted. Add an app shortcut in that module, not at a call site.
 - **Ptys survive disconnect** — buffered + replayed on reconnect (`pty:replay`); killed only on explicit `pty:kill`.
 - **Scrollback survives a restart, shells don't** — buffers are flushed to `~/.ganglion/scrollback/`
-  every 5s and on SIGTERM (`lib/scrollback.js`); a respawned pane replays the saved text above a
+  every 30s and on SIGTERM (`lib/scrollback.js`); a respawned pane replays the saved text above a
   fresh shell. `cleanup()` sets `shuttingDown` first so the exit handlers it triggers don't delete them.
 - **State saved on every change** to `~/.ganglion/state.json`.
 - **`embedding`/`embedding_model` columns are reserved but NULL** — semantic search can be added

@@ -316,7 +316,7 @@ function renderTab(tabData) {
     api.ptySpawn(tabData.id, tabData.cwd);
   });
 
-  term.onData((data) => api.ptyWrite(tabData.id, data));
+  term.onData((data) => { if (!writeToTerm.isReplaying()) api.ptyWrite(tabData.id, data); });
   term.onResize(({ cols, rows }) => api.ptyResize(tabData.id, cols, rows));
 
   const disposeData = api.onPtyData(tabData.id, writeToTerm);
@@ -396,7 +396,7 @@ function spawnRightTerminal(entry) {
     api.ptySpawn(rightId, entry.tabData.cwd);
   });
 
-  termRight.onData((data) => api.ptyWrite(rightId, data));
+  termRight.onData((data) => { if (!writeToTermRight.isReplaying()) api.ptyWrite(rightId, data); });
   termRight.onResize(({ cols, rows }) => api.ptyResize(rightId, cols, rows));
 
   entry.disposeDataRight = api.onPtyData(rightId, writeToTermRight);

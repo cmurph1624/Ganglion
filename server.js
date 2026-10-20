@@ -55,10 +55,11 @@ const STATE_FILE = path.join(STATE_DIR, 'state.json');
 const ptyProcesses = new Map();
 const ptyBuffers = new Map();
 // Scrollback kept on disk across restarts (lib/scrollback.js). Buffers that changed since
-// the last flush are written every few seconds; shuttingDown stops the exit handlers that
+// the last flush are written every 30s (a busy Claude pane is dirty nonstop, and each
+// flush rewrites up to 512KB); shuttingDown stops the exit handlers that
 // SIGTERM sets off from deleting the files the shutdown flush just wrote.
 const SCROLLBACK_DIR = scrollback.scrollbackDir();
-const SCROLLBACK_FLUSH_MS = 5000;
+const SCROLLBACK_FLUSH_MS = 30000;
 const dirtyBuffers = new Set();
 let shuttingDown = false;
 const statusWatchers = new Map();
