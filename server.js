@@ -22,6 +22,8 @@ const {
 } = require('./lib/platform');
 const { createSizeRegistry } = require('./lib/pty-sizing');
 const { serverPort } = require('./lib/server-probe');
+const { buildAllowedHosts, httpGuard, wsVerifier } = require('./lib/request-guard');
+const { parseMessage, isTabId, isSavableState } = require('./lib/message-guard');
 
 // Distillation makes an LLM call per session to write a narrative session note into
 // sessions.summary (searchable in the Memory overlay). It does NOT touch Claude Code's
@@ -63,12 +65,16 @@ try {
 
 const app = express();
 const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// Refuse other websites: see lib/request-guard.js. Must run before every route.
+const allowedHosts = buildAllowedHosts();
+const wss = new WebSocketServer({ server, verifyClient: wsVerifier(allowedHosts) });
 
+app.use(httpGuard(allowedHosts));
 app.use(express.static(path.join(__dirname, 'renderer')));
 app.get('/xterm.css', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/css/xterm.css')));
 app.get('/xterm.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/xterm/lib/xterm.js')));
 app.get('/addon-fit.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/@xterm/addon-fit/lib/addon-fit.js')));
+app.get('/purify.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/dompurify/dist/purify.js')));
 app.get('/marked.js', (_req, res) => res.sendFile(path.join(__dirname, 'node_modules/marked/lib/marked.umd.js')));
 
 app.post('/upload-image', express.raw({ type: 'image/*', limit: '10mb' }), (req, res) => {
@@ -291,6 +297,7 @@ function applySize(tabId) {
 }
 
 function spawnPty(ws, tabId, cwd) {
+  if (!isTabId(tabId)) return;
   if (ptyProcesses.has(tabId)) {
     ws.send(JSON.stringify({ type: 'pty:replay', tabId, data: ptyBuffers.get(tabId) || '' }));
     return;
@@ -339,13 +346,18 @@ function spawnPty(ws, tabId, cwd) {
   }
 }
 
+// One bad message must not take the server down: a crash kills every pty.
 function handleMessage(ws, msg) {
-  let parsed;
   try {
-    parsed = JSON.parse(msg);
-  } catch {
-    return;
+    dispatchMessage(ws, msg);
+  } catch (err) {
+    console.error('message handler failed:', err && err.stack ? err.stack : err);
   }
+}
+
+function dispatchMessage(ws, msg) {
+  const parsed = parseMessage(msg);
+  if (!parsed) return;
 
   switch (parsed.type) {
     case 'state:load': {
@@ -357,6 +369,8 @@ function handleMessage(ws, msg) {
       break;
     }
     case 'state:save': {
+      // A missing or non-object state would overwrite state.json with garbage.
+      if (!isSavableState(parsed.state)) break;
       saveState(parsed.state);
       break;
     }
@@ -379,6 +393,7 @@ function handleMessage(ws, msg) {
     }
     case 'pty:kill': {
       const tabId = parsed.tabId;
+      if (!isTabId(tabId)) break;
       const p = ptyProcesses.get(tabId);
       if (p) {
         try { p.kill(); } catch {}
@@ -492,6 +507,8 @@ function handleMessage(ws, msg) {
 
 wss.on('connection', (ws) => {
   clients.add(ws);
+  // Without a listener, a socket 'error' event is thrown and crashes the server.
+  ws.on('error', (err) => console.error('websocket error:', err.message));
   ws.on('message', (msg) => handleMessage(ws, msg.toString()));
   ws.on('close', () => {
     clients.delete(ws);

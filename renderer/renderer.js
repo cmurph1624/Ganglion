@@ -482,7 +482,7 @@ async function loadMarkdownFile(tabId) {
     const resp = await fetch(`/file?path=${encodeURIComponent(filePath)}`);
     if (!resp.ok) throw new Error(await resp.text());
     const text = await resp.text();
-    entry.mdContent.innerHTML = marked.parse(text);
+    entry.mdContent.innerHTML = renderMarkdown(text);
     entry.tabData.markdownFile = filePath;
     persistState();
   } catch (err) {

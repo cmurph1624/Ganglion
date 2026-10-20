@@ -53,6 +53,7 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `renderer/client.js` | WebSocket client abstraction |
 | `renderer/terminal-keys.js` | Shared key policy — decides pty vs browser vs app for each keydown; read by both the terminals and the Memory overlay |
 | `renderer/clipboard.js` | Terminal → local clipboard: OSC 52 handler (how Claude Code copies on a headless box), Ctrl+Shift+C copy, click-to-copy fallback when the browser blocks a write; skips replayed output |
+| `renderer/markdown.js` | `renderMarkdown()` — `marked` + DOMPurify; the only way markdown may reach `innerHTML` |
 | `renderer/styles.css` | Styles |
 | `hooks/ganglion-hooks.json` | Claude Code hook config (standalone copy) |
 | `setup-hooks.js` | Merges hooks into `~/.claude/settings.json` |
@@ -63,6 +64,8 @@ Launch it as `electron electron/main.js`, never `electron .` — that resolves `
 | `memory/distiller.js` | Distills one narrative session note via headless `claude -p` into `sessions.summary` |
 | `lib/platform.js` | Windows/POSIX bindings: shell, signal-file paths, cwd probe, `claude` binary |
 | `lib/pty-sizing.js` | Per-client size registry; pty takes the minimum over attached clients |
+| `lib/request-guard.js` | Host + Origin allowlist for every HTTP request and WebSocket — stops other websites (and DNS rebinding) from driving the shells |
+| `lib/message-guard.js` | Input checks for WebSocket messages (bad JSON, missing tabId, missing state) |
 | `lib/server-probe.js` | Port resolution (shared with `server.js`) + non-throwing health probe |
 | `lib/window-bounds.js` | Validates persisted desktop-window bounds against current displays |
 | `electron/main.js` | Desktop shell: window, bounds, health probe/retry, file dialog, key policy |
@@ -167,4 +170,7 @@ Tab state (names, cwd, open markdown files, divider positions) is saved to `~/.g
 - Never `systemctl restart ganglion` or trigger a deploy from inside a Ganglion tab — it kills every pty, including the one running the command (see Deploy)
 - Scripts needing env vars must source `.env` explicitly
 - **No auth anywhere.** `GET /file?path=` reads any path the server user can, and the listener binds all interfaces by default — which is exactly what the Mac depends on, so this cannot simply be bound to loopback. Accepted risk; do not expose port 3000 to an untrusted network. `GANGLION_HOST` allows pinning the interface later without a code change.
+- **No auth does not mean any website may connect.** `lib/request-guard.js` refuses requests whose `Host` isn't this box (localhost, an IP, the hostname, or `<hostname>.<tailnet>.ts.net`) and browser requests whose `Origin` is another site; the WebSocket gets the same check via `verifyClient`. Reaching Ganglion under another name (e.g. a Mac `/etc/hosts` alias) needs `GANGLION_ALLOWED_HOSTS=name1,name2` in `ganglion.env`.
+- Render markdown only through `renderMarkdown()` (`renderer/markdown.js`), never `marked.parse()` into `innerHTML` — transcripts contain web text, and script on this page can type into a shell.
+- `handleMessage` catches everything a message handler throws: an uncaught throw would exit the process and kill every pty.
 - `pty:cwd` uses `lsof -d cwd` on Linux (`lib/platform.js`). It is inert on Windows (no probe), where tab cwd and git-repo auto-naming do not update

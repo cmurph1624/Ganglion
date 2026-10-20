@@ -171,19 +171,19 @@
       if (r.source === 'note') {
         const resp = await fetch(`/file?path=${encodeURIComponent(r.path)}`);
         const text = await resp.text();
-        expand.innerHTML = `<div class="mem-note-body markdown-content">${window.marked.parse(text)}</div>
+        expand.innerHTML = `<div class="mem-note-body markdown-content">${window.renderMarkdown(text)}</div>
           <div class="mem-cite">${escapeHtml(r.path)}</div>`;
       } else if (r.source === 'summary') {
         const data = await api.memoryGetSession(r.sessionId);
         const summary = data && data.session && data.session.summary;
-        expand.innerHTML = `<div class="mem-note-body markdown-content">${window.marked.parse(summary || '_no note_')}</div>
+        expand.innerHTML = `<div class="mem-note-body markdown-content">${window.renderMarkdown(summary || '_no note_')}</div>
           <div class="mem-cite">session ${escapeHtml(r.sessionId)} · ${escapeHtml(r.path)}</div>`;
       } else {
         const data = await api.memoryGetTurn(r.id, 3);
         if (!data || !data.turns) { expand.innerHTML = '<div class="mem-loading">No context.</div>'; return; }
         const turns = data.turns.map((t) => {
           const who = t.role === 'assistant' ? 'assistant' : 'user';
-          const body = window.marked.parse(t.text || '');
+          const body = window.renderMarkdown(t.text || '');
           const focus = t.uuid === r.id ? ' focus' : '';
           return `<div class="mem-turn ${who}${focus}"><span class="mem-turn-role">${who}</span><div class="markdown-content">${body}</div></div>`;
         }).join('');
