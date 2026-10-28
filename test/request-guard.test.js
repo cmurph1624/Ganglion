@@ -10,13 +10,13 @@ const {
   wsVerifier,
 } = require('../lib/request-guard');
 
-const allowed = buildAllowedHosts({ hostname: 'stigmergylabs', extra: 'ganglion.lan' });
+const allowed = buildAllowedHosts({ hostname: 'devbox', extra: 'ganglion.lan' });
 
 test('hostnameOf strips ports and IPv6 brackets', () => {
   assert.strictEqual(hostnameOf('localhost:3000'), 'localhost');
   assert.strictEqual(hostnameOf('[::1]:3000'), '::1');
   assert.strictEqual(hostnameOf('::1'), '::1');
-  assert.strictEqual(hostnameOf('Stigmergylabs:3000'), 'stigmergylabs');
+  assert.strictEqual(hostnameOf('Devbox:3000'), 'devbox');
   assert.strictEqual(hostnameOf(undefined), null);
 });
 
@@ -25,9 +25,9 @@ test('Host: this box by any of its names is allowed', () => {
     'localhost:3000',
     '127.0.0.1:3000',
     '[::1]:3000',
-    '100.99.115.13:3000',
-    'stigmergylabs:3000',
-    'stigmergylabs.tailc44383.ts.net:3000',
+    '100.64.0.1:3000',
+    'devbox:3000',
+    'devbox.tail1234.ts.net:3000',
     'ganglion.lan',
   ]) {
     assert.ok(isAllowedHost(h, allowed), h);
@@ -37,9 +37,9 @@ test('Host: this box by any of its names is allowed', () => {
 test('Host: foreign names (DNS rebinding) are refused', () => {
   for (const h of [
     'evil.com:3000',
-    'stigmergylabs.evil.com:3000',
-    'other.tailc44383.ts.net:3000',
-    'stigmergylabs.tailc44383.ts.net.evil.com',
+    'devbox.evil.com:3000',
+    'other.tail1234.ts.net:3000',
+    'devbox.tail1234.ts.net.evil.com',
     '',
     undefined,
   ]) {
@@ -49,8 +49,8 @@ test('Host: foreign names (DNS rebinding) are refused', () => {
 
 test('Origin: absent is allowed, same-box origins are allowed', () => {
   assert.ok(isAllowedOrigin(undefined, allowed));
-  assert.ok(isAllowedOrigin('http://stigmergylabs.tailc44383.ts.net:3000', allowed));
-  assert.ok(isAllowedOrigin('http://100.99.115.13:3000', allowed));
+  assert.ok(isAllowedOrigin('http://devbox.tail1234.ts.net:3000', allowed));
+  assert.ok(isAllowedOrigin('http://100.64.0.1:3000', allowed));
   assert.ok(isAllowedOrigin('http://localhost:3000', allowed));
 });
 
@@ -76,7 +76,7 @@ test('httpGuard returns 403 for a cross-site request and passes a same-site one'
 
 test('wsVerifier refuses a WebSocket opened by another site', () => {
   const verify = wsVerifier(allowed);
-  assert.ok(verify({ req: { headers: { host: 'stigmergylabs:3000', origin: 'http://stigmergylabs:3000' } } }));
-  assert.ok(!verify({ req: { headers: { host: 'stigmergylabs:3000', origin: 'https://evil.com' } } }));
+  assert.ok(verify({ req: { headers: { host: 'devbox:3000', origin: 'http://devbox:3000' } } }));
+  assert.ok(!verify({ req: { headers: { host: 'devbox:3000', origin: 'https://evil.com' } } }));
   assert.ok(!verify({ req: { headers: { host: 'evil.com', origin: 'https://evil.com' } } }));
 });

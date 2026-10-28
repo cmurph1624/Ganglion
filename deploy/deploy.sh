@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Redeploy Ganglion on the host (stigmergylabs): sync to a git ref, rebuild native modules,
+# Redeploy Ganglion on the host: sync to a git ref, rebuild native modules,
 # restart the service, health-check the port. Invoked by CI over SSH:
 #
 #   ssh ubuntu@<tailnet-ip> "bash /home/ubuntu/dev/Ganglion/deploy/deploy.sh '<ref>'"
