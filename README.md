@@ -60,7 +60,7 @@ Configuration lives in `~/.ganglion/ganglion.env` (mode 600, read by the unit). 
 
 Deploys are deliberate: **a merge to `main` does not deploy.** `.github/workflows/deploy.yml` runs CI on every push and PR; the deploy job runs only on a `v*` tag or a manual `workflow_dispatch`. It joins the tailnet as an ephemeral node, SSHes to the box and runs `deploy/deploy.sh <ref>` (checkout → `npm ci` → `npm test` → restart → health check).
 
-It needs repository secrets `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `DEPLOY_SSH_KEY`, `SSH_KNOWN_HOSTS` and a repository variable `DEPLOY_HOST` (the box's MagicDNS name or tailnet IP).
+It needs repository secrets `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `DEPLOY_SSH_KEY`, `SSH_KNOWN_HOSTS` and a repository variable `DEPLOY_HOST` (the box's MagicDNS name or tailnet IP). `DEPLOY_HOST` must be the same name `SSH_KNOWN_HOSTS` was generated for: create that secret with `ssh-keyscan <DEPLOY_HOST>`, or host-key verification fails.
 
 > ⚠️ **A restart kills every terminal**, including the one you ran it from (their scrollback is kept, the running programs are not). Deploy from a plain SSH shell, not a Ganglion tab, at a moment when losing all tabs is fine.
 

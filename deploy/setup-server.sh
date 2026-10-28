@@ -103,7 +103,7 @@ cat <<EOF
      # reachable over tailnet (from your laptop):
      curl -sS http://<tailnet-ip>:3000/ | head
      # NOT reachable publicly:
-     nc -vz 3.138.201.77 3000    # should fail/timeout
+     nc -vz <public-ip> 3000     # should fail/timeout
 
 5. Tailscale + GitHub: tag this box tag:server, add the tag:ci -> tag:server:22
    ACL, create the OAuth client, add the GitHub Actions secrets, then push a v*

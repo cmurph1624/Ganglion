@@ -71,7 +71,7 @@ jobs:
 
       - name: Deploy
         env:
-          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}   # repo variable: the box's MagicDNS name or tailnet IP
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}   # repo variable; must match the name SSH_KNOWN_HOSTS was made for (ssh-keyscan <DEPLOY_HOST>)
           DEPLOY_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
         run: |
           if [ -z "$DEPLOY_HOST" ]; then echo "::error::Set the DEPLOY_HOST repository variable"; exit 1; fi
