@@ -9,9 +9,9 @@ Ganglion is a terminal multiplexer + always-on cross-session memory layer.
 A single Node process (`server.js`) serves the UI, manages `node-pty` shells over WebSocket,
 watches Claude Code hook files, and owns the SQLite memory store.
 
-It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the systemd `ganglion` service (`deploy/ganglion.service`,
+It runs on a headless Ubuntu 24.04 box as the systemd `ganglion` service (`deploy/ganglion.service`,
 config in `~/.ganglion/ganglion.env`). Browsers attach to that one process and **mirror the same
-ptys** — in practice the Mac, over Tailscale.
+ptys** — typically a laptop, over Tailscale.
 
 ## Data flows
 

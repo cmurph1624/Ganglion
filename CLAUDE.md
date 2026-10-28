@@ -8,9 +8,9 @@ Ganglion is a terminal multiplexer that runs as a Node.js server on this machine
 Browsers attach to that one server and **mirror the same live ptys** — in practice the Mac, over Tailscale (any tailnet device can connect). Several can be connected at once.
 
 ## Where It Runs
-Production is a GMKtec M6 Ultra mini PC — hostname `stigmergylabs` (`stigmergylabs.tailc44383.ts.net`, Ubuntu 24.04, 12 cores / 25 GB, headless, user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`, `GANGLION_CLAUDE_BIN` and `GANGLION_SWEEP_SIGNALS=1` (boot sweep of stale tab signal files; production only) are set. `setup-server.sh` only creates this file when it is missing, so a new knob in `.env.example` must be added to the live file by hand. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
+Production is a headless Ubuntu 24.04 mini PC on the tailnet (user `ubuntu`), repo at `/home/ubuntu/dev/Ganglion`, run by **systemd** as the `ganglion` service (`deploy/ganglion.service`). Config lives in `~/.ganglion/ganglion.env` (mode 600, `EnvironmentFile=` of the unit) — that is where `PORT`, `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`, `GANGLION_CLAUDE_BIN` and `GANGLION_SWEEP_SIGNALS=1` (boot sweep of stale tab signal files; production only) are set. `setup-server.sh` only creates this file when it is missing, so a new knob in `.env.example` must be added to the live file by hand. First-time host setup: `bash deploy/setup-server.sh` (idempotent).
 
-Earlier hosts are retired: the Dell (tailnet node `stigmergylabs-dell`, offline), before that EC2, and before that a Windows box over RDP. The Electron desktop client, pm2 config and Windows code paths from those hosts have been removed.
+Earlier hosts are retired: a Dell, before that EC2, and before that a Windows box over RDP. The Electron desktop client, pm2 config and Windows code paths from those hosts have been removed.
 
 ```bash
 sudo systemctl status ganglion --no-pager

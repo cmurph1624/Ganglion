@@ -1,5 +1,5 @@
 :root {
-  /* Paper palette shared with the stigmergylabs OS dashboard. The chrome follows the
+  /* Paper palette shared with a companion OS dashboard. The chrome follows the
      system light/dark setting; the terminal stays a warm dark pane in both (renderer.js
      reads --term-* to theme xterm, so change them here, not there). */
   --bg: #F5F2EC;

@@ -1,8 +1,23 @@
 # Ganglion
 
-A terminal multiplexer that runs as an always-on Node server and is used from a browser. Each tab is a real shell (`node-pty` + `xterm.js`) with an optional right-hand panel — a second terminal or a markdown viewer — and the tab's dot shows what Claude Code is doing in it. Ganglion also remembers: every Claude Code session it hosts is captured into a searchable memory store, alongside your Obsidian vault.
+A browser-based terminal multiplexer built for running several Claude Code sessions at once.
 
-It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the `ganglion` systemd service. Browsers connect over Tailscale — in practice the Mac — at `http://stigmergylabs.tailc44383.ts.net:3000`. Any number of browsers can attach at once; they mirror the same live terminals, tmux-style.
+Ganglion is an always-on Node server on a home box. You open it from any browser on your
+private network, and each tab is a real shell (`node-pty` + `xterm.js`). A coloured dot on every
+tab shows what Claude Code is doing in it: working, waiting for you, or idle. Ganglion also
+captures every session it hosts into a searchable SQLite memory store, next to your Obsidian vault,
+so past conversations and decisions are a keyword search away.
+
+**Why.** With several agents running in parallel, the hard part is knowing which one needs you.
+tmux can't see inside Claude Code, and a laptop terminal dies when the lid closes. Ganglion keeps
+the shells on a server, survives disconnects, mirrors the same live terminals to every attached
+browser (tmux-style), and turns Claude Code's hook events into per-tab status and optional phone
+alerts.
+
+> **Security first:** there is **no login**. Anyone who can reach the port gets a shell as the
+> service user. Run it only on a private network you control (it is built for
+> [Tailscale](https://tailscale.com)), and never expose it to the internet. See
+> [Security](#security).
 
 ## Features
 
@@ -20,7 +35,9 @@ It runs on `stigmergylabs` (a GMKtec mini PC, Ubuntu 24.04) as the `ganglion` sy
 
 ## Running it
 
-The service is set up once with `bash deploy/setup-server.sh` (idempotent: build deps, `~/.ganglion/ganglion.env`, `npm ci`, the systemd unit), then `npm run setup-hooks` to install the Claude Code hooks — without them there are no status dots and no memory capture.
+Requirements: Linux (developed on Ubuntu 24.04), Node 22, build tools for the native modules (`python3 g++ make`), and Claude Code. The systemd unit assumes user `ubuntu` with the repo at `~/dev/Ganglion`; edit `deploy/ganglion.service` for another layout.
+
+Set the host up once with `bash deploy/setup-server.sh` (idempotent: build deps, `~/.ganglion/ganglion.env`, `npm ci`, the systemd unit), then run `npm run setup-hooks` to install the Claude Code hooks. Without the hooks there are no status dots and no memory capture.
 
 ```bash
 sudo systemctl status ganglion --no-pager
@@ -34,18 +51,20 @@ Configuration lives in `~/.ganglion/ganglion.env` (mode 600, read by the unit). 
 | `PORT` / `GANGLION_HOST` | Listen port (3000) and interface (all) |
 | `GANGLION_DISTILL_ENABLED`, `GANGLION_DISTILL_MODEL`, `GANGLION_DISTILL_IDLE_MIN` | Session notes: on/off, model, minutes of quiet before a note is written |
 | `GANGLION_CLAUDE_BIN` | `claude` binary for session notes (default `~/.local/bin/claude`) |
-| `GANGLION_VAULT` | Obsidian vault to index (default `~/TheBrainOfChris`) |
+| `GANGLION_VAULT` | Obsidian vault to index (default `~/TheBrainOfChris`; set this to your own vault) |
 | `GANGLION_ALLOWED_HOSTS` | Extra host names the browser may use to reach Ganglion |
 | `GANGLION_NTFY_URL`, `GANGLION_NTFY_TOKEN`, `GANGLION_ALERT_CLICK_URL`, `GANGLION_ALERT_DELAY_SEC`, `GANGLION_ALERT_DONE_MIN` | Phone alerts: ntfy topic URL (unset = off), optional token, link the alert opens, seconds a tab must stay red/idle before alerting (30), minimum run length for a "finished" alert (5; 0 = off) |
 | `GANGLION_SWEEP_SIGNALS` | Production only: clear stale tab files from `/tmp` at boot |
 
 ### Deploying
 
-Deploys are deliberate — **a merge to `main` does not deploy.** Use the agent-ops **deploy** skill (`/deploy ganglion`), which runs `.github/workflows/deploy.yml`: CI, then SSH over Tailscale to run `deploy/deploy.sh <ref>` (checkout → `npm ci` → `npm test` → restart → health check).
+Deploys are deliberate: **a merge to `main` does not deploy.** `.github/workflows/deploy.yml` runs CI on every push and PR; the deploy job runs only on a `v*` tag or a manual `workflow_dispatch`. It joins the tailnet as an ephemeral node, SSHes to the box and runs `deploy/deploy.sh <ref>` (checkout → `npm ci` → `npm test` → restart → health check).
+
+It needs repository secrets `TS_OAUTH_CLIENT_ID`, `TS_OAUTH_SECRET`, `DEPLOY_SSH_KEY`, `SSH_KNOWN_HOSTS` and a repository variable `DEPLOY_HOST` (the box's MagicDNS name or tailnet IP).
 
 > ⚠️ **A restart kills every terminal**, including the one you ran it from (their scrollback is kept, the running programs are not). Deploy from a plain SSH shell, not a Ganglion tab, at a moment when losing all tabs is fine.
 
-> ⚠️ **The checkout is live.** The service runs from `/home/ubuntu/dev/Ganglion` and serves `renderer/` straight from disk, so pulling or switching branches there changes what browsers get on reload. Work in a worktree: `git worktree add ../Ganglion-<branch>`.
+> ⚠️ **The checkout is live.** The service runs from its checkout (`~/dev/Ganglion`) and serves `renderer/` straight from disk, so pulling or switching branches there changes what browsers get on reload. Work in a worktree: `git worktree add ../Ganglion-<branch>`.
 
 ### Developing
 
@@ -77,7 +96,7 @@ The integration tests do this for you (`test/helpers/server.js`).
 
 **Sizing.** Each terminal is sized to the smallest viewport among the attached browsers, so it fits in all of them.
 
-**Security.** There is no login: anything that can reach port 3000 gets a shell, so keep it on the tailnet. What *is* blocked is other websites: requests must name this host and, from a browser, come from Ganglion's own page — so a page open in your browser can't connect to the terminals.
+<a id="security"></a>**Security.** There is no login: anything that can reach port 3000 gets a shell as the service user, so keep it on a private network such as a tailnet, optionally with a firewall rule limiting the port to it. What *is* blocked is other websites (`lib/request-guard.js`): the `Host` header must name this box (localhost, an IP literal, its hostname, its MagicDNS name or `GANGLION_ALLOWED_HOSTS`), and a browser's `Origin` must be one of those too. That stops DNS-rebinding and cross-site WebSocket attacks from a page open in your own browser. Requests without an `Origin` (curl, the hooks) are allowed.
 
 ## Known gaps
 

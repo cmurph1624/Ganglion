@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-time (idempotent) bootstrap for Ganglion on Ubuntu 24.04 (stigmergylabs).
+# One-time (idempotent) bootstrap for Ganglion on Ubuntu 24.04.
 # Run it from the repo root ON THE SERVER, after cloning:
 #
 #   git clone git@github.com:cmurph1624/Ganglion.git ~/dev/Ganglion
@@ -101,7 +101,7 @@ cat <<EOF
 
 4. Verify tailnet-only exposure:
      # reachable over tailnet (from your laptop):
-     curl -sS http://100.69.175.66:3000/ | head
+     curl -sS http://<tailnet-ip>:3000/ | head
      # NOT reachable publicly:
      nc -vz 3.138.201.77 3000    # should fail/timeout
 
