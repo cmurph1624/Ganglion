@@ -25,6 +25,25 @@ const PER_TURN_CHARS = 800;
 const CONTEXT_TOTAL_CHARS = 12000;
 const MAX_NOTE_CHARS = 4000;
 const DISTILL_CWD = path.join(os.homedir(), '.ganglion', 'distill');
+// Written by the machine-wide usage governor (~/dev/agent-ops/usage). It already folds in
+// any `usage override`, so `state: "flag"` alone means hold off.
+const USAGE_GATE = path.join(os.homedir(), '.local', 'state', 'usage', 'gate.json');
+const GATE_STALE_MS = 30 * 60 * 1000;
+
+/**
+ * The reason to skip a distill (the usage governor is flagged), or null to go ahead.
+ * Fails open: a missing, unreadable or stale gate file means go ahead.
+ */
+function usagePaused(file = USAGE_GATE, now = Date.now()) {
+  try {
+    const g = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (g.state !== 'flag') return null;
+    if (typeof g.computed_at === 'number' && now - g.computed_at * 1000 > GATE_STALE_MS) return null;
+    return g.reason || 'usage limit';
+  } catch {
+    return null;
+  }
+}
 
 // --- Context + prompt --------------------------------------------------------------
 function buildContext(db, sessionId) {
@@ -59,6 +78,9 @@ ${contextText}`;
 // --- Real LLM runner (headless claude -p, recursion-guarded) -----------------------
 function realRunLLM(prompt) {
   return new Promise((resolve, reject) => {
+    // Rejecting leaves distilled_turns alone, so the session is retried on its next trigger.
+    const paused = usagePaused();
+    if (paused) return reject(new Error(`usage limit: governor paused (${paused})`));
     fs.mkdirSync(DISTILL_CWD, { recursive: true });
     const model = process.env.GANGLION_DISTILL_MODEL || 'haiku';
     const env = { ...process.env, GANGLION_DISTILL: '1' };
@@ -106,5 +128,6 @@ module.exports = {
   distillSession,
   buildContext,
   buildNotePrompt,
-  realRunLLM
+  realRunLLM,
+  usagePaused
 };

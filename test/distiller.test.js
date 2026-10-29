@@ -84,3 +84,27 @@ test('buildContext joins turns; buildNotePrompt embeds the context', () => {
   assert.match(prompt, /expo publish/);
   db.close();
 });
+
+test('usagePaused follows the usage governor and fails open', () => {
+  const fs = require('fs');
+  const os = require('os');
+  const path = require('path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'));
+  const file = path.join(dir, 'gate.json');
+  const now = 1_800_000_000_000;
+  const write = (g) => fs.writeFileSync(file, JSON.stringify(g));
+  const { usagePaused } = distiller;
+
+  assert.strictEqual(usagePaused(file, now), null, 'missing file: go');
+  fs.writeFileSync(file, '{not json');
+  assert.strictEqual(usagePaused(file, now), null, 'unreadable file: go');
+  write({ state: 'ok', computed_at: now / 1000 });
+  assert.strictEqual(usagePaused(file, now), null);
+  write({ state: 'unknown', computed_at: now / 1000 });
+  assert.strictEqual(usagePaused(file, now), null);
+  write({ state: 'flag', reason: 'weekly limit at 80%', computed_at: now / 1000 - 60 });
+  assert.strictEqual(usagePaused(file, now), 'weekly limit at 80%');
+  write({ state: 'flag', reason: 'weekly limit at 80%', computed_at: now / 1000 - 3600 });
+  assert.strictEqual(usagePaused(file, now), null, 'stale gate: go');
+  fs.rmSync(dir, { recursive: true });
+});
