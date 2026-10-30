@@ -173,11 +173,14 @@ function attachStatusWatcher(tabId) {
       if (alerter && raw) alerter.onStatus(tabId, raw);
     } catch {}
   };
-  read();
+  // Watch first, then read: the initial broadcast can reach a client before this function
+  // returns, and a status written in that gap (a hook, or a test reacting to "idle") would
+  // otherwise be missed for good, since the file never changes again until the next status.
   try {
     const w = fs.watch(file, { persistent: false }, () => read());
     statusWatchers.set(tabId, w);
   } catch {}
+  read();
 
   const toolFile = toolFileFor(tabId);
   try { fs.writeFileSync(toolFile, ''); } catch {}
